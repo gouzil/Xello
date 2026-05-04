@@ -1,0 +1,12 @@
+[package]
+name = "xello_rust_py"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "xello_rust_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28.3", features = ["extension-module"] }
+
