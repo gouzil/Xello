@@ -18,6 +18,11 @@ static uint64_t positive_duration(uint64_t duration_ns) {
     return duration_ns == 0 ? 1 : duration_ns;
 }
 
+static uint64_t elapsed_ns_since(uint64_t start_ns) {
+    uint64_t end_ns = now_ns();
+    return end_ns <= start_ns ? 1 : end_ns - start_ns;
+}
+
 static const char *shared_ext(void) {
 #ifdef __APPLE__
     return ".dylib";
@@ -42,6 +47,18 @@ static const char *bridge_kind(const char *callee) {
     }
     if (strcmp(callee, "rust") == 0) {
         return "C ABI fallback";
+    }
+    if (strcmp(callee, "cpp") == 0) {
+        return "C++ shared library via C ABI";
+    }
+    if (strcmp(callee, "zig") == 0) {
+        return "Zig shared library via C ABI";
+    }
+    if (strcmp(callee, "kotlin_native") == 0) {
+        return "Kotlin/Native dynamic library via C ABI";
+    }
+    if (strcmp(callee, "wasm") == 0) {
+        return "WebAssembly C ABI shim";
     }
     return NULL;
 }
@@ -78,7 +95,6 @@ static int call_python(char *message, size_t message_size, uint64_t *duration_ns
 
     uint64_t start = now_ns();
     PyObject *value = PyObject_CallFunction(func, "s", "c");
-    *duration_ns = positive_duration(now_ns() - start);
     Py_DECREF(func);
     if (value == NULL) {
         PyErr_Print();
@@ -94,6 +110,7 @@ static int call_python(char *message, size_t message_size, uint64_t *duration_ns
         return 1;
     }
     snprintf(message, message_size, "%s", raw);
+    *duration_ns = elapsed_ns_since(start);
     Py_DECREF(value);
     Py_Finalize();
     return 0;
@@ -117,8 +134,8 @@ static int call_provider(const char *callee, char *message, size_t message_size,
 
     uint64_t start = now_ns();
     const char *raw = hello("c");
-    *duration_ns = positive_duration(now_ns() - start);
     snprintf(message, message_size, "%s", raw);
+    *duration_ns = elapsed_ns_since(start);
     dlclose(handle);
     return 0;
 }
@@ -137,8 +154,9 @@ static int call_edge(const char *callee, int json_output) {
         rc = call_python(message, sizeof(message), &duration_ns);
     } else if (strcmp(callee, "c") == 0) {
         uint64_t start = now_ns();
-        snprintf(message, sizeof(message), "%s", c_hello("c"));
-        duration_ns = positive_duration(now_ns() - start);
+        const char *raw = c_hello("c");
+        snprintf(message, sizeof(message), "%s", raw);
+        duration_ns = elapsed_ns_since(start);
     } else {
         rc = call_provider(callee, message, sizeof(message), &duration_ns);
     }
@@ -147,29 +165,55 @@ static int call_edge(const char *callee, int json_output) {
     }
 
     if (json_output) {
-        printf(
-            "[{\"caller\":\"c\",\"callee\":\"%s\",\"bridge\":\"%s\",\"duration_ns\":%llu,"
-            "\"message\":\"%s\",\"output\":\"c runner -> %s implementation via %s: %s\"}]\n",
-            callee,
-            bridge,
-            (unsigned long long)duration_ns,
-            message,
-            callee,
-            bridge,
-            message);
+        printf("[{\"caller\":\"c\",\"callee\":\"%s\",\"bridge\":\"%s\",\"duration_ns\":%llu,"
+               "\"message\":\"%s\",\"output\":\"c runner -> %s implementation via %s: %s\"}]\n",
+               callee, bridge, (unsigned long long)duration_ns, message, callee, bridge, message);
     } else {
-        printf("c runner -> %s implementation via %s: %s (duration_ns=%llu)\n",
-               callee,
-               bridge,
-               message,
+        printf("c runner -> %s implementation via %s: %s (duration_ns=%llu)\n", callee, bridge, message,
                (unsigned long long)duration_ns);
     }
     return 0;
 }
 
 static int is_language(const char *language) {
-    return strcmp(language, "python") == 0 || strcmp(language, "c") == 0 || strcmp(language, "go") == 0 ||
-           strcmp(language, "rust") == 0;
+    return bridge_kind(language) != NULL;
+}
+
+static void load_languages(const char **languages, size_t *count) {
+    static const char *known_languages[] = {"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"};
+    *count = 0;
+
+    FILE *file = fopen("build/xello_languages.json", "r");
+    if (file == NULL) {
+        for (size_t index = 0; index < 5; index++) {
+            languages[(*count)++] = known_languages[index];
+        }
+        return;
+    }
+
+    char buffer[8192];
+    size_t used = fread(buffer, 1, sizeof(buffer) - 1, file);
+    fclose(file);
+    buffer[used] = '\0';
+
+    char *key = strstr(buffer, "\"languages\"");
+    char *start = key == NULL ? NULL : strchr(key, '[');
+    char *end = start == NULL ? NULL : strchr(start, ']');
+    if (start == NULL || end == NULL) {
+        for (size_t index = 0; index < 5; index++) {
+            languages[(*count)++] = known_languages[index];
+        }
+        return;
+    }
+
+    *end = '\0';
+    for (size_t index = 0; index < sizeof(known_languages) / sizeof(known_languages[0]); index++) {
+        char token[64];
+        snprintf(token, sizeof(token), "\"%s\"", known_languages[index]);
+        if (strstr(start, token) != NULL) {
+            languages[(*count)++] = known_languages[index];
+        }
+    }
 }
 
 static void edge_command(const char *caller, const char *callee, int json_output, char *buffer, size_t size) {
@@ -180,8 +224,16 @@ static void edge_command(const char *caller, const char *callee, int json_output
         snprintf(buffer, size, "build/bin/xello_c %scall %s", json_flag, callee);
     } else if (strcmp(caller, "go") == 0) {
         snprintf(buffer, size, "build/bin/xello_go %scall %s", json_flag, callee);
-    } else {
+    } else if (strcmp(caller, "rust") == 0) {
         snprintf(buffer, size, "build/bin/xello_rust %scall %s", json_flag, callee);
+    } else if (strcmp(caller, "cpp") == 0) {
+        snprintf(buffer, size, "build/bin/xello_cpp %scall %s", json_flag, callee);
+    } else if (strcmp(caller, "kotlin_native") == 0) {
+        snprintf(buffer, size, "build/bin/xello_kotlin_native.kexe %scall %s", json_flag, callee);
+    } else if (strcmp(caller, "wasm") == 0) {
+        snprintf(buffer, size, "python3 runners/wasm/xello_wasm.py %scall %s", json_flag, callee);
+    } else {
+        snprintf(buffer, size, "build/bin/xello_%s %scall %s", caller, json_flag, callee);
     }
 }
 
@@ -254,13 +306,15 @@ static int run_edge(const char *caller, const char *callee, int json_output, int
 }
 
 static int run_matrix(int json_output) {
-    const char *languages[] = {"python", "c", "go", "rust"};
+    const char *languages[8];
+    size_t language_count = 0;
+    load_languages(languages, &language_count);
     int first = 1;
     if (json_output) {
         printf("[\n");
     }
-    for (size_t caller = 0; caller < 4; caller++) {
-        for (size_t callee = 0; callee < 4; callee++) {
+    for (size_t caller = 0; caller < language_count; caller++) {
+        for (size_t callee = 0; callee < language_count; callee++) {
             int rc = run_edge(languages[caller], languages[callee], json_output, &first);
             if (rc != 0) {
                 return rc;
@@ -274,7 +328,9 @@ static int run_matrix(int json_output) {
 }
 
 static int run_fanout(const char *caller, int json_output) {
-    const char *languages[] = {"python", "c", "go", "rust"};
+    const char *languages[8];
+    size_t language_count = 0;
+    load_languages(languages, &language_count);
     int first_json = 1;
     if (!is_language(caller)) {
         fprintf(stderr, "unknown language: %s\n", caller);
@@ -283,7 +339,7 @@ static int run_fanout(const char *caller, int json_output) {
     if (json_output) {
         printf("[\n");
     }
-    for (size_t callee = 0; callee < 4; callee++) {
+    for (size_t callee = 0; callee < language_count; callee++) {
         int rc = run_edge(caller, languages[callee], json_output, &first_json);
         if (rc != 0) {
             return rc;

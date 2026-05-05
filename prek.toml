@@ -1,0 +1,40 @@
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "fix-byte-order-marker" },
+  { id = "mixed-line-ending", args = ["--fix=lf"] },
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+  { id = "check-json" },
+  { id = "check-merge-conflict" },
+  { id = "check-added-large-files" },
+  { id = "detect-private-key" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "lint-python", name = "lint python with ruff", language = "system", entry = "ruff check --fix", files = "\\.py$" },
+  { id = "fmt-python", name = "format python with ruff", language = "system", entry = "ruff format", files = "\\.py$" },
+  { id = "fmt-c-family", name = "format c/c++/objective-c with clang-format", language = "system", entry = "clang-format -i", files = "\\.(c|h|cc|cpp|cxx|hh|hpp|hxx|m|mm)$" },
+  { id = "fmt-go", name = "format go with gofmt", language = "system", entry = "gofmt -w", files = "\\.go$" },
+  { id = "fmt-rust", name = "format rust with rustfmt", language = "system", entry = "rustfmt --edition 2024", files = "\\.rs$" },
+  { id = "fmt-zig", name = "format zig with zig fmt", language = "system", entry = "python3 tools/run_optional_formatter.py zig fmt", files = "\\.(zig|zon)$" },
+  { id = "fmt-js-ts", name = "format javascript/typescript/node with prettier", language = "system", entry = "prettier --write", files = "(\\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$|(^|/)package(-lock)?\\.json$|(^|/)tsconfig[^/]*\\.json$)" },
+  { id = "fmt-java", name = "format java with google-java-format", language = "system", entry = "google-java-format -i", files = "\\.java$" },
+  { id = "fmt-kotlin", name = "format kotlin/jvm and kotlin/native with ktfmt", language = "system", entry = "python3 tools/run_optional_formatter.py ktfmt --format", files = "\\.(kt|kts)$" },
+  { id = "fmt-dotnet", name = "format csharp with dotnet format", language = "system", entry = "dotnet format --include", files = "\\.cs$" },
+  { id = "fmt-swift", name = "format swift with swift-format", language = "system", entry = "swift-format --in-place", files = "\\.swift$" },
+  { id = "fmt-dart", name = "format dart with dart format", language = "system", entry = "dart format", files = "\\.dart$" },
+  { id = "fmt-ruby", name = "format ruby with rubocop", language = "system", entry = "rubocop -A", files = "(\\.(rb|rake)$|(^|/)(Gemfile|Rakefile)$)" },
+  { id = "fmt-php", name = "format php with php-cs-fixer", language = "system", entry = "php-cs-fixer fix", files = "\\.php$" },
+  { id = "fmt-lua", name = "format lua with stylua", language = "system", entry = "stylua", files = "\\.lua$" },
+  { id = "fmt-r", name = "format r with styler", language = "system", entry = "python3 tools/run_optional_formatter.py Rscript tools/format_r_files.R", files = "\\.(r|R|Rmd)$" },
+  { id = "fmt-julia", name = "format julia with JuliaFormatter", language = "system", entry = "python3 tools/run_optional_formatter.py julia --startup-file=no tools/format_julia_files.jl", files = "\\.jl$" },
+  { id = "fmt-assembly", name = "format assembly with asmfmt", language = "system", entry = "asmfmt -w", files = "\\.(s|S|asm)$" },
+  { id = "fmt-webassembly", name = "format webassembly text with wat-fmt", language = "system", entry = "python3 tools/run_optional_formatter.py wat-fmt", files = "\\.(wat|wast)$" },
+]

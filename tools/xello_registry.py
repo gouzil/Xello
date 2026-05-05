@@ -4,6 +4,7 @@ import json
 import os
 import platform
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -11,6 +12,8 @@ BIN_DIR = BUILD / "bin"
 LIB_DIR = BUILD / "lib"
 
 LANGUAGES = ("python", "c", "go", "rust")
+PLANNED_LANGUAGES = ("cpp", "zig", "kotlin_native", "wasm")
+RUNTIME_MANIFEST = BUILD / "xello_languages.json"
 
 BRIDGE_KIND = {
     ("python", "python"): "python direct import",
@@ -21,14 +24,21 @@ BRIDGE_KIND = {
     ("c", "c"): "direct C function",
     ("c", "go"): "cgo C ABI fallback",
     ("c", "rust"): "C ABI fallback",
-    ("go", "python"): "os/exec Python runner",
+    ("go", "python"): "Python shared library via Python/C API",
     ("go", "c"): "cgo C ABI fallback",
     ("go", "go"): "direct Go function",
     ("go", "rust"): "cgo C ABI fallback",
-    ("rust", "python"): "std::process Python runner",
+    ("rust", "python"): "PyO3 embedded Python",
     ("rust", "c"): "libloading crate",
     ("rust", "go"): "libloading crate over C ABI fallback",
     ("rust", "rust"): "direct Rust function",
+}
+
+FALLBACK_CALLEE_BRIDGE_KIND = {
+    "cpp": "C++ shared library via C ABI",
+    "zig": "Zig shared library via C ABI",
+    "kotlin_native": "Kotlin/Native dynamic library via C ABI",
+    "wasm": "WebAssembly C ABI shim",
 }
 
 FALLBACK_BRIDGE_KIND = {
@@ -52,11 +62,35 @@ def exe(name: str) -> str:
 def runner_path(language: str) -> Path:
     if language == "python":
         return ROOT / "runners/python/xello_python.py"
+    if language == "wasm":
+        return ROOT / "runners/wasm/xello_wasm.py"
+    if language == "kotlin_native":
+        return BIN_DIR / exe("xello_kotlin_native.kexe")
     return BIN_DIR / exe(f"xello_{language}")
 
 
 def provider_path(language: str) -> Path:
     return LIB_DIR / f"libxello_{language}{shared_ext()}"
+
+
+def load_runtime_manifest() -> dict[str, Any]:
+    if not RUNTIME_MANIFEST.exists():
+        return {"languages": list(LANGUAGES)}
+    with RUNTIME_MANIFEST.open(encoding="utf-8") as file:
+        return json.load(file)
+
+
+def supported_languages() -> tuple[str, ...]:
+    raw_languages = load_runtime_manifest().get("languages", LANGUAGES)
+    return tuple(str(language) for language in raw_languages)
+
+
+def bridge_kind(caller: str, callee: str) -> str:
+    if (caller, callee) in BRIDGE_KIND:
+        return BRIDGE_KIND[(caller, callee)]
+    if callee in FALLBACK_CALLEE_BRIDGE_KIND:
+        return FALLBACK_CALLEE_BRIDGE_KIND[callee]
+    raise KeyError((caller, callee))
 
 
 def python_extension_suffix() -> str:
@@ -73,7 +107,7 @@ def rust_python_module_path() -> Path:
 
 
 def validate_language(language: str) -> None:
-    if language not in LANGUAGES:
+    if language not in supported_languages():
         raise ValueError(f"unknown language: {language}")
 
 

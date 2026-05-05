@@ -25,7 +25,43 @@ import (
 	"unsafe"
 )
 
-var languages = map[string]bool{"python": true, "c": true, "go": true, "rust": true}
+var knownLanguageList = []string{"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"}
+var languages = map[string]bool{
+	"python":        true,
+	"c":             true,
+	"go":            true,
+	"rust":          true,
+	"cpp":           true,
+	"zig":           true,
+	"kotlin_native": true,
+	"wasm":          true,
+}
+
+type runtimeManifest struct {
+	Languages []string `json:"languages"`
+}
+
+func languageList() []string {
+	raw, err := os.ReadFile("build/xello_languages.json")
+	if err != nil {
+		return []string{"python", "c", "go", "rust", "cpp"}
+	}
+	var manifest runtimeManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return []string{"python", "c", "go", "rust", "cpp"}
+	}
+	selected := make([]string, 0, len(manifest.Languages))
+	inManifest := make(map[string]bool, len(manifest.Languages))
+	for _, language := range manifest.Languages {
+		inManifest[language] = true
+	}
+	for _, language := range knownLanguageList {
+		if inManifest[language] {
+			selected = append(selected, language)
+		}
+	}
+	return selected
+}
 
 type callResult struct {
 	Caller     string `json:"caller"`
@@ -39,13 +75,21 @@ type callResult struct {
 func bridgeKind(callee string) string {
 	switch callee {
 	case "python":
-		return "os/exec Python runner"
+		return "Python shared library via Python/C API"
 	case "c":
 		return "cgo C ABI fallback"
 	case "go":
 		return "direct Go function"
 	case "rust":
 		return "cgo C ABI fallback"
+	case "cpp":
+		return "C++ shared library via C ABI"
+	case "zig":
+		return "Zig shared library via C ABI"
+	case "kotlin_native":
+		return "Kotlin/Native dynamic library via C ABI"
+	case "wasm":
+		return "WebAssembly C ABI shim"
 	default:
 		return ""
 	}
@@ -60,24 +104,6 @@ func sharedExt() string {
 
 func hello(caller string) string {
 	return "hello world from go implementation, called by " + caller
-}
-
-func callPython() (string, int64, error) {
-	start := time.Now()
-	completed := exec.Command("python3", "runners/python/xello_python.py", "--json", "call", "python")
-	output, err := completed.Output()
-	durationNS := time.Since(start).Nanoseconds()
-	if err != nil {
-		return "", durationNS, err
-	}
-	var results []callResult
-	if err := json.Unmarshal(output, &results); err != nil {
-		return "", durationNS, err
-	}
-	if len(results) != 1 {
-		return "", durationNS, fmt.Errorf("expected one python result, got %d", len(results))
-	}
-	return strings.Replace(results[0].Message, "called by python", "called by go", 1), durationNS, nil
 }
 
 func callProvider(callee string) (string, int64, error) {
@@ -104,6 +130,12 @@ func callProvider(callee string) (string, int64, error) {
 	return message, max(time.Since(start).Nanoseconds(), 1), nil
 }
 
+func callLocal() (string, int64) {
+	start := time.Now()
+	message := hello("go")
+	return message, max(time.Since(start).Nanoseconds(), 1)
+}
+
 func callEdge(callee string) (callResult, error) {
 	if !languages[callee] {
 		return callResult{}, fmt.Errorf("unknown language: %s", callee)
@@ -114,12 +146,8 @@ func callEdge(callee string) (callResult, error) {
 	var durationNS int64
 	var err error
 	switch callee {
-	case "python":
-		message, durationNS, err = callPython()
 	case "go":
-		start := time.Now()
-		message = hello("go")
-		durationNS = max(time.Since(start).Nanoseconds(), 1)
+		message, durationNS = callLocal()
 	default:
 		message, durationNS, err = callProvider(callee)
 	}
@@ -161,6 +189,14 @@ func runnerCommand(language string, args ...string) *exec.Cmd {
 		return exec.Command("build/bin/xello_go", args...)
 	case "rust":
 		return exec.Command("build/bin/xello_rust", args...)
+	case "cpp":
+		return exec.Command("build/bin/xello_cpp", args...)
+	case "zig":
+		return exec.Command("build/bin/xello_zig", args...)
+	case "kotlin_native":
+		return exec.Command("build/bin/xello_kotlin_native.kexe", args...)
+	case "wasm":
+		return exec.Command("python3", append([]string{"runners/wasm/xello_wasm.py"}, args...)...)
 	default:
 		return nil
 	}
@@ -232,9 +268,10 @@ func runChain(raw string) ([]callResult, error) {
 }
 
 func runMatrix() ([]callResult, error) {
-	results := make([]callResult, 0, len(languages)*len(languages))
-	for _, caller := range []string{"python", "c", "go", "rust"} {
-		for _, callee := range []string{"python", "c", "go", "rust"} {
+	currentLanguages := languageList()
+	results := make([]callResult, 0, len(currentLanguages)*len(currentLanguages))
+	for _, caller := range currentLanguages {
+		for _, callee := range currentLanguages {
 			result, err := callViaRunner(caller, callee)
 			if err != nil {
 				return nil, err
@@ -249,8 +286,9 @@ func runFanout(caller string) ([]callResult, error) {
 	if !languages[caller] {
 		return nil, fmt.Errorf("unknown language: %s", caller)
 	}
-	results := make([]callResult, 0, len(languages))
-	for _, callee := range []string{"python", "c", "go", "rust"} {
+	currentLanguages := languageList()
+	results := make([]callResult, 0, len(currentLanguages))
+	for _, callee := range currentLanguages {
 		result, err := callViaRunner(caller, callee)
 		if err != nil {
 			return nil, err

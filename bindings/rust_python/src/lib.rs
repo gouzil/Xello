@@ -10,4 +10,3 @@ fn xello_rust_py(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(hello, module)?)?;
     Ok(())
 }
-

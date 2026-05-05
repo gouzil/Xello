@@ -5,6 +5,24 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y clang-format
+      - run: python -m pip install ruff
+      - uses: j178/prek-action@v2
+
   test:
     runs-on: ubuntu-latest
     steps:

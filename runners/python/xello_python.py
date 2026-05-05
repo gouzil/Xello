@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import importlib.util
 import subprocess
 import sys
 import time
-
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,14 +15,14 @@ sys.path.insert(0, str(ROOT))
 
 from runners.python.xello_python_impl import hello as python_hello
 from tools.xello_registry import (
-    BRIDGE_KIND,
-    LANGUAGES,
+    bridge_kind,
     parse_edges,
     print_results,
     provider_path,
     result,
     rust_python_module_path,
     runner_path,
+    supported_languages,
     validate_language,
 )
 
@@ -30,7 +30,7 @@ from tools.xello_registry import (
 def call_local(caller: str) -> tuple[str, str, int]:
     start = time.perf_counter_ns()
     message = python_hello(caller)
-    return BRIDGE_KIND[(caller, "python")], message, time.perf_counter_ns() - start
+    return bridge_kind(caller, "python"), message, time.perf_counter_ns() - start
 
 
 def call_shared_provider(caller: str, callee: str) -> tuple[str, str, int]:
@@ -39,7 +39,7 @@ def call_shared_provider(caller: str, callee: str) -> tuple[str, str, int]:
     library.xello_hello.restype = ctypes.c_char_p
     start = time.perf_counter_ns()
     message = library.xello_hello(caller.encode("utf-8")).decode("utf-8")
-    return BRIDGE_KIND[(caller, callee)], message, time.perf_counter_ns() - start
+    return bridge_kind(caller, callee), message, time.perf_counter_ns() - start
 
 
 def call_rust_via_pyo3(caller: str) -> tuple[str, str, int]:
@@ -51,7 +51,7 @@ def call_rust_via_pyo3(caller: str) -> tuple[str, str, int]:
     spec.loader.exec_module(module)
     start = time.perf_counter_ns()
     message = module.hello(caller)
-    return BRIDGE_KIND[(caller, "rust")], message, time.perf_counter_ns() - start
+    return bridge_kind(caller, "rust"), message, time.perf_counter_ns() - start
 
 
 def call_edge(caller: str, callee: str) -> dict[str, object]:
@@ -70,15 +70,21 @@ def call_edge(caller: str, callee: str) -> dict[str, object]:
 def delegate_edge(caller: str, callee: str) -> dict[str, object]:
     if caller == "python":
         return call_edge(caller, callee)
+    command = [str(runner_path(caller)), "--json", "call", callee]
+    if caller == "wasm":
+        command.insert(0, sys.executable)
     completed = subprocess.run(
-        [str(runner_path(caller)), "--json", "call", callee],
+        command,
         cwd=ROOT,
-        check=True,
+        capture_output=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
     )
-    import json
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise ValueError(f"{caller} runner failed for {callee}: {detail}")
+    if not completed.stdout.strip():
+        detail = completed.stderr.strip() or "empty stdout"
+        raise ValueError(f"{caller} runner returned no JSON for {callee}: {detail}")
 
     return json.loads(completed.stdout)[0]
 
@@ -89,11 +95,11 @@ def run_chain(raw_edges: str) -> list[dict[str, object]]:
 
 def run_fanout(caller: str) -> list[dict[str, object]]:
     validate_language(caller)
-    return [delegate_edge(caller, callee) for callee in LANGUAGES]
+    return [delegate_edge(caller, callee) for callee in supported_languages()]
 
 
 def run_matrix() -> list[dict[str, object]]:
-    return [delegate_edge(caller, callee) for caller in LANGUAGES for callee in LANGUAGES]
+    return [delegate_edge(caller, callee) for caller in supported_languages() for callee in supported_languages()]
 
 
 def main() -> int:
