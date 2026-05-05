@@ -1,8 +1,12 @@
 try
     using JuliaFormatter
 catch err
-    @error "JuliaFormatter is required for Julia formatting: import Pkg; Pkg.add(\"JuliaFormatter\")" exception=(err, catch_backtrace())
-    exit(1)
+    if isa(err, ArgumentError)
+        println("JuliaFormatter not found; skipping optional formatter")
+        exit(0)
+    end
+
+    rethrow()
 end
 
 format(ARGS)
