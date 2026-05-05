@@ -13,7 +13,7 @@ from tools.xello_registry import runner_path, validate_language
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print("usage: tools/run_from.py <python|c|go|rust> <call|chain|matrix> ...", file=sys.stderr)
+        print("usage: tools/run_from.py <language> <call|chain|matrix> ...", file=sys.stderr)
         return 2
 
     runner = sys.argv[1]
@@ -24,7 +24,7 @@ def main() -> int:
         return 2
 
     command = [str(runner_path(runner)), *sys.argv[2:]]
-    if runner == "python":
+    if runner in ("python", "wasm"):
         command.insert(0, sys.executable)
     return subprocess.run(command, cwd=ROOT).returncode
 

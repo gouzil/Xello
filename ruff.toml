@@ -1,0 +1,31 @@
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = [
+    "B",
+    "C4",
+    "E",
+    "F",
+    "I",
+    "PERF",
+    "PIE",
+    "PTH",
+    "RET",
+    "RUF",
+    "SIM",
+    "TID",
+    "UP",
+    "W",
+]
+ignore = [
+    "E501",
+]
+
+[lint.per-file-ignores]
+"runners/python/xello_python.py" = ["E402", "I001"]
+"runners/wasm/xello_wasm.py" = ["E402"]
+"tests/test_xello.py" = ["E402"]
+"tools/benchmark.py" = ["E402"]
+"tools/run_from.py" = ["E402"]
+"tools/xello.py" = ["E402", "I001"]
