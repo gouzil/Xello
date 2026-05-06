@@ -152,12 +152,9 @@ fn delegateToPython(allocator: std.mem.Allocator, json_output: bool, args: []con
     if (term != .Exited or term.Exited != 0) return error.PythonRunnerFailed;
 }
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    const raw_args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, raw_args);
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const raw_args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var index: usize = 1;
     var json_output = false;
