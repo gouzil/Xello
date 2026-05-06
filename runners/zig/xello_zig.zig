@@ -153,7 +153,7 @@ fn delegateToPython(allocator: std.mem.Allocator, json_output: bool, args: []con
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     const raw_args = try std.process.argsAlloc(allocator);
