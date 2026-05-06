@@ -47,6 +47,7 @@ Examples in the current matrix:
 - `rust -> c`: Rust `libloading` crate.
 - `go -> c`: cgo over the C ABI.
 - `cpp -> c/go/rust/zig/kotlin_native/wasm`: C++ `dlopen` over C ABI.
+- `cpp -> c`: optional direct C provider call through an `extern "C"` declaration.
 - `python/c/go/rust/cpp -> cpp`: C++ provider exposing C ABI.
 - `python/c/cpp/go/rust -> zig`: Zig provider exposing C ABI.
 - `python/c/cpp/go/rust -> kotlin_native`: Kotlin/Native provider exposing C ABI.
@@ -237,11 +238,19 @@ Rust calling Python currently exposes both PyO3 embedding and the Python/C API p
 python3 tools/benchmark.py call rust python
 ```
 
+C++ calling C exposes both the default `dlopen` path and a direct linked C provider call through `extern "C"`:
+
+```sh
+python3 tools/benchmark.py call cpp c
+```
+
 Use `--bridge` to show only one implementation:
 
 ```sh
 python3 tools/benchmark.py call rust python --bridge pyo3
 python3 tools/benchmark.py call rust python --bridge capi
+python3 tools/benchmark.py call cpp c --bridge dlopen
+python3 tools/benchmark.py call cpp c --bridge extern-c
 ```
 
 ## Formatting
