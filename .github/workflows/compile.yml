@@ -37,13 +37,14 @@ jobs:
       - name: Install Zig
         if: matrix.language == 'zig'
         env:
-          ZIG_VERSION: 0.15.1
+          ZIG_VERSION: 0.16.0
         run: |
           curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
             -o "${RUNNER_TEMP}/zig.tar.xz" \
             "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
           sudo tar -xJ -C /opt -f "${RUNNER_TEMP}/zig.tar.xz"
-          sudo ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          sudo ln -sf "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
       - name: Install Kotlin/Native
         if: matrix.language == 'kotlin_native'
         env:
