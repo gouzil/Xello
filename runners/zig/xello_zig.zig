@@ -132,7 +132,7 @@ fn printResults(io: std.Io, results: []const CallResult, json_output: bool) !voi
     }
 }
 
-fn delegateToPython(allocator: std.mem.Allocator, json_output: bool, args: []const []const u8) !void {
+fn delegateToPython(io: std.Io, json_output: bool, args: []const []const u8) !void {
     var command_buffer: [16][]const u8 = undefined;
     var command_len: usize = 0;
     command_buffer[command_len] = "python3";
@@ -149,11 +149,8 @@ fn delegateToPython(allocator: std.mem.Allocator, json_output: bool, args: []con
         command_len += 1;
     }
 
-    var child = std.process.Child.init(command_buffer[0..command_len], allocator);
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    const term = try child.spawnAndWait();
-    if (term != .Exited or term.Exited != 0) return error.PythonRunnerFailed;
+    const err = std.process.replace(io, .{ .argv = command_buffer[0..command_len] });
+    return err;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -178,5 +175,5 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    try delegateToPython(allocator, json_output, raw_args[index..]);
+    try delegateToPython(io, json_output, raw_args[index..]);
 }
