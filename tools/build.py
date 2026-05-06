@@ -149,6 +149,19 @@ def main() -> None:
             str(LIB_DIR / f"libxello_c{ext}"),
         ]
     )
+    c_provider_object = CACHE_DIR / "xello_c_provider.o"
+    run(
+        [
+            "cc",
+            "-fPIC",
+            "-I",
+            include,
+            "-c",
+            str(ROOT / "providers/c/xello_c.c"),
+            "-o",
+            str(c_provider_object),
+        ]
+    )
 
     if shutil.which("c++"):
         run(
@@ -228,7 +241,10 @@ def main() -> None:
         run(
             [
                 "c++",
+                "-I",
+                include,
                 str(ROOT / "runners/cpp/xello_cpp.cpp"),
+                str(c_provider_object),
                 "-o",
                 str(BIN_DIR / exe("xello_cpp")),
                 *c_dlopen_link_flags(),

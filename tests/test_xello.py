@@ -280,6 +280,32 @@ class XelloTests(unittest.TestCase):
         capi_results = json.loads(capi_completed.stdout)
         self.assertEqual("Python shared library via Python/C API", capi_results[0]["bridge"])
 
+    def test_cpp_c_bridge_variants_are_available(self) -> None:
+        default_completed = run_command(
+            [
+                str(ROOT / "build/bin/xello_cpp"),
+                "--json",
+                "call",
+                "c",
+            ]
+        )
+        default_results = json.loads(default_completed.stdout)
+        self.assertEqual("C shared library via C ABI", default_results[0]["bridge"])
+
+        extern_c_completed = run_command(
+            [
+                str(ROOT / "build/bin/xello_cpp"),
+                "--json",
+                "call",
+                "--bridge",
+                "extern-c",
+                "c",
+            ]
+        )
+        extern_c_results = json.loads(extern_c_completed.stdout)
+        self.assertEqual('C provider linked through extern "C"', extern_c_results[0]["bridge"])
+        self.assertIn("called by cpp", extern_c_results[0]["message"])
+
     def test_fanout_runs_one_language_to_all_supported_languages(self) -> None:
         for caller in languages():
             with self.subTest(caller=caller):
@@ -431,6 +457,47 @@ class XelloTests(unittest.TestCase):
         self.assertEqual(1, len(capi_results))
         self.assertEqual("Python shared library via Python/C API", capi_results[0]["bridge"])
 
+    def test_benchmark_expands_cpp_c_bridge_variants_by_default(self) -> None:
+        completed = run_command(
+            [
+                sys.executable,
+                "tools/benchmark.py",
+                "--json",
+                "--iterations",
+                "1",
+                "--warmup",
+                "0",
+                "call",
+                "cpp",
+                "c",
+            ]
+        )
+        results = json.loads(completed.stdout)
+        self.assertEqual(
+            ["C shared library via C ABI", 'C provider linked through extern "C"'],
+            [item["bridge"] for item in results],
+        )
+
+        extern_c_completed = run_command(
+            [
+                sys.executable,
+                "tools/benchmark.py",
+                "--json",
+                "--iterations",
+                "1",
+                "--warmup",
+                "0",
+                "call",
+                "cpp",
+                "c",
+                "--bridge",
+                "extern-c",
+            ]
+        )
+        extern_c_results = json.loads(extern_c_completed.stdout)
+        self.assertEqual(1, len(extern_c_results))
+        self.assertEqual('C provider linked through extern "C"', extern_c_results[0]["bridge"])
+
     def test_benchmark_fanout_table_covers_one_caller(self) -> None:
         completed = run_command(
             [
@@ -469,7 +536,7 @@ class XelloTests(unittest.TestCase):
             )
             self.assertIn("caller", completed_cpp.stdout)
             self.assertIn("cpp", completed_cpp.stdout)
-            self.assertEqual(len(languages()), completed_cpp.stdout.count("\ncpp"))
+            self.assertEqual(len(languages()) + 1, completed_cpp.stdout.count("\ncpp"))
 
         for language in optional_languages():
             with self.subTest(language=language):

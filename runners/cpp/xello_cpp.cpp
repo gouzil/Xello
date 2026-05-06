@@ -10,7 +10,14 @@
 #include <string>
 #include <vector>
 
+#include "xello.h"
+
 using XelloHelloFn = const char *(*)(const char *);
+
+enum class CBridge {
+    Dlopen,
+    ExternC,
+};
 
 static uint64_t now_ns() {
     timespec ts;
@@ -39,11 +46,14 @@ static std::string provider_path(const char *language) {
     return std::string("build/lib/libxello_") + language + shared_ext();
 }
 
-static const char *bridge_kind(const char *callee) {
+static const char *bridge_kind(const char *callee, CBridge c_bridge = CBridge::Dlopen) {
     if (strcmp(callee, "python") == 0) {
         return "Python shared library via Python/C API";
     }
     if (strcmp(callee, "c") == 0) {
+        if (c_bridge == CBridge::ExternC) {
+            return "C provider linked through extern \"C\"";
+        }
         return "C shared library via C ABI";
     }
     if (strcmp(callee, "go") == 0) {
@@ -74,6 +84,42 @@ static const char *cpp_hello(const char *caller) {
     return message.c_str();
 }
 
+static std::string json_string(const std::string &value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (unsigned char ch : value) {
+        switch (ch) {
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (ch < 0x20) {
+                char buffer[7];
+                snprintf(buffer, sizeof(buffer), "\\u%04x", ch);
+                escaped += buffer;
+            } else {
+                escaped.push_back(static_cast<char>(ch));
+            }
+            break;
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
 static int call_provider(const char *callee, std::string &message, uint64_t &duration_ns) {
     std::string path = provider_path(callee);
     void *handle = dlopen(path.c_str(), RTLD_NOW);
@@ -97,8 +143,8 @@ static int call_provider(const char *callee, std::string &message, uint64_t &dur
     return 0;
 }
 
-static int call_edge(const char *callee, bool json_output) {
-    const char *bridge = bridge_kind(callee);
+static int call_edge(const char *callee, bool json_output, CBridge c_bridge = CBridge::Dlopen) {
+    const char *bridge = bridge_kind(callee, c_bridge);
     if (bridge == nullptr) {
         fprintf(stderr, "unknown language: %s\n", callee);
         return 2;
@@ -111,6 +157,11 @@ static int call_edge(const char *callee, bool json_output) {
         uint64_t start = now_ns();
         message = cpp_hello("cpp");
         duration_ns = elapsed_ns_since(start);
+    } else if (strcmp(callee, "c") == 0 && c_bridge == CBridge::ExternC) {
+        uint64_t start = now_ns();
+        const char *raw = xello_hello("cpp");
+        message = raw == nullptr ? "" : raw;
+        duration_ns = elapsed_ns_since(start);
     } else {
         rc = call_provider(callee, message, duration_ns);
     }
@@ -118,20 +169,33 @@ static int call_edge(const char *callee, bool json_output) {
         return rc;
     }
 
+    std::string output = std::string("cpp runner -> ") + callee + " implementation via " + bridge + ": " + message;
     if (json_output) {
-        printf("[{\"caller\":\"cpp\",\"callee\":\"%s\",\"bridge\":\"%s\",\"duration_ns\":%llu,"
-               "\"message\":\"%s\",\"output\":\"cpp runner -> %s implementation via %s: %s\"}]\n",
-               callee, bridge, static_cast<unsigned long long>(duration_ns), message.c_str(), callee, bridge,
-               message.c_str());
+        printf("[{\"caller\":\"cpp\",\"callee\":%s,\"bridge\":%s,\"duration_ns\":%llu,"
+               "\"message\":%s,\"output\":%s}]\n",
+               json_string(callee).c_str(), json_string(bridge).c_str(), static_cast<unsigned long long>(duration_ns),
+               json_string(message).c_str(), json_string(output).c_str());
     } else {
-        printf("cpp runner -> %s implementation via %s: %s (duration_ns=%llu)\n", callee, bridge, message.c_str(),
-               static_cast<unsigned long long>(duration_ns));
+        printf("%s (duration_ns=%llu)\n", output.c_str(), static_cast<unsigned long long>(duration_ns));
     }
     return 0;
 }
 
 static bool is_language(const char *language) {
     return bridge_kind(language) != nullptr;
+}
+
+static int parse_c_bridge(const char *raw, CBridge &bridge) {
+    if (strcmp(raw, "dlopen") == 0) {
+        bridge = CBridge::Dlopen;
+        return 0;
+    }
+    if (strcmp(raw, "extern-c") == 0) {
+        bridge = CBridge::ExternC;
+        return 0;
+    }
+    fprintf(stderr, "unknown cpp->c bridge: %s\n", raw);
+    return 2;
 }
 
 static std::vector<const char *> load_languages() {
@@ -346,11 +410,30 @@ int main(int argc, char **argv) {
 
     const char *command = argv[argi++];
     if (strcmp(command, "call") == 0) {
+        CBridge c_bridge = CBridge::Dlopen;
+        if (argi < argc && strcmp(argv[argi], "--bridge") == 0) {
+            argi++;
+            if (argi >= argc) {
+                fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
+                return 2;
+            }
+            if (parse_c_bridge(argv[argi++], c_bridge) != 0) {
+                return 2;
+            }
+        }
         if (argi >= argc) {
-            fprintf(stderr, "usage: xello_cpp [--json] call <callee>\n");
+            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
             return 2;
         }
-        return call_edge(argv[argi], json_output);
+        if (argi + 1 != argc) {
+            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
+            return 2;
+        }
+        if (c_bridge == CBridge::ExternC && strcmp(argv[argi], "c") != 0) {
+            fprintf(stderr, "--bridge extern-c is only supported for cpp -> c\n");
+            return 2;
+        }
+        return call_edge(argv[argi], json_output, c_bridge);
     }
     if (strcmp(command, "matrix") == 0) {
         return run_matrix(json_output);
