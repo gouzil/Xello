@@ -34,10 +34,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl default-jre-headless g++ xz-utils
-      - uses: mlugg/setup-zig@v2
+      - name: Install Zig
         if: matrix.language == 'zig'
-        with:
-          version: 0.16.0
+        env:
+          ZIG_VERSION: 0.15.1
+        run: |
+          curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
+            -o "${RUNNER_TEMP}/zig.tar.xz" \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sudo tar -xJ -C /opt -f "${RUNNER_TEMP}/zig.tar.xz"
+          sudo ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
       - name: Install Kotlin/Native
         if: matrix.language == 'kotlin_native'
         env:

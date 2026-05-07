@@ -138,10 +138,6 @@ def main() -> None:
     include = str(ROOT / "include")
     go_env = {"GOCACHE": str(CACHE_DIR / "go-build")}
     cargo_env = {"CARGO_TARGET_DIR": str(CACHE_DIR / "rust-target")}
-    zig_env = {
-        "ZIG_GLOBAL_CACHE_DIR": str(CACHE_DIR / "zig-global-cache"),
-        "ZIG_LOCAL_CACHE_DIR": str(CACHE_DIR / "zig-local-cache"),
-    }
     built_languages: set[str] = set()
     planned_languages: dict[str, str] = {}
     c_provider_object = CACHE_DIR / "xello_c_provider.o"
@@ -332,8 +328,7 @@ def main() -> None:
                     "ReleaseSafe",
                     str(ROOT / "providers/zig/xello_zig.zig"),
                     "-femit-bin=" + str(LIB_DIR / f"libxello_zig{ext}"),
-                ],
-                env=zig_env,
+                ]
             )
             zig_runner_built = try_run(
                 [
@@ -344,8 +339,7 @@ def main() -> None:
                     "ReleaseSafe",
                     str(ROOT / "runners/zig/xello_zig.zig"),
                     "-femit-bin=" + str(BIN_DIR / exe("xello_zig")),
-                ],
-                env=zig_env,
+                ]
             )
             if zig_provider_built and zig_runner_built:
                 mark_built("zig")
