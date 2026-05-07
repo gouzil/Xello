@@ -1,11 +1,10 @@
-name: CI
+name: CI Format
 
 on:
-  push:
   pull_request:
 
 jobs:
-  lint:
+  format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,10 +21,3 @@ jobs:
       - run: sudo apt-get install -y clang-format
       - run: python -m pip install ruff
       - uses: j178/prek-action@v2
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker build -t xello .
-      - run: docker run --rm xello make matrix

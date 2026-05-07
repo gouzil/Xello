@@ -1,0 +1,62 @@
+name: CI Compile
+
+on:
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - python
+          - c
+          - cpp
+          - go
+          - rust
+          - zig
+          - kotlin_native
+          - wasm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        if: matrix.language == 'go'
+        with:
+          go-version: stable
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.language == 'rust'
+      - name: Install native dependencies
+        if: contains(fromJSON('["python","c","cpp","zig","kotlin_native","wasm"]'), matrix.language)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates g++
+      - uses: mlugg/setup-zig@v2
+        if: matrix.language == 'zig'
+        with:
+          version: 0.16.0
+      - uses: actions/setup-java@v5
+        if: matrix.language == 'kotlin_native'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: robinraju/release-downloader@v1
+        if: matrix.language == 'kotlin_native'
+        with:
+          repository: JetBrains/kotlin
+          tag: v1.9.24
+          fileName: kotlin-native-linux-x86_64-1.9.24.tar.gz
+          out-file-path: .toolchains/kotlin-native
+          extract: true
+      - name: Add Kotlin/Native to PATH
+        if: matrix.language == 'kotlin_native'
+        run: |
+          echo "$GITHUB_WORKSPACE/.toolchains/kotlin-native/kotlin-native-linux-x86_64-1.9.24/bin" >> "$GITHUB_PATH"
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+        if: matrix.language == 'wasm'
+        with:
+          version: "1.246.2"
+      - run: python tools/build.py --languages "${{ matrix.language }}"
