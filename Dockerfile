@@ -3,19 +3,17 @@ FROM --platform=${XELLO_DOCKER_PLATFORM} golang:bookworm AS go-toolchain
 
 FROM --platform=${XELLO_DOCKER_PLATFORM} rust:bookworm AS rust-toolchain
 
+FROM --platform=${XELLO_DOCKER_PLATFORM} kassany/alpine-ziglang:0.16.0 AS zig-toolchain
+
 FROM --platform=${XELLO_DOCKER_PLATFORM} python:3.11-bookworm AS xello-build
 
-ARG ZIG_VERSION=0.15.1
+ARG ZIG_VERSION=0.16.0
 ARG KOTLIN_NATIVE_VERSION=1.9.24
 ARG WASM_TOOLS_VERSION=1.246.2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl default-jre-headless g++ xz-utils \
-    && curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
-        -o /tmp/zig.tar.xz \
-        "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-    && tar -xJ -C /opt -f /tmp/zig.tar.xz \
-    && ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
+    && ln -sf "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
     && curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
         -o /tmp/kotlin-native.tar.gz \
         "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/${KOTLIN_NATIVE_VERSION}/kotlin-native-prebuilt-${KOTLIN_NATIVE_VERSION}-linux-x86_64.tar.gz" \
@@ -24,8 +22,9 @@ RUN apt-get update \
         -o /tmp/wasm-tools.tar.gz \
         "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux.tar.gz" \
     && tar -xzf /tmp/wasm-tools.tar.gz -C /usr/local/bin --strip-components=1 "wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux/wasm-tools" \
-    && rm -rf /var/lib/apt/lists/* /tmp/zig.tar.xz /tmp/kotlin-native.tar.gz /tmp/wasm-tools.tar.gz
+    && rm -rf /var/lib/apt/lists/* /tmp/kotlin-native.tar.gz /tmp/wasm-tools.tar.gz
 
+COPY --from=zig-toolchain /zig/0.16.0/files /opt/zig-x86_64-linux-0.16.0
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY --from=go-toolchain /usr/local/go /usr/local/go
