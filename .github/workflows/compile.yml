@@ -33,7 +33,7 @@ jobs:
         if: contains(fromJSON('["python","c","cpp","zig","kotlin_native","wasm"]'), matrix.language)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ca-certificates g++
+          sudo apt-get install -y --no-install-recommends ca-certificates curl g++
       - uses: mlugg/setup-zig@v2
         if: matrix.language == 'zig'
         with:
@@ -43,11 +43,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: fwilhe2/setup-kotlin@v1.8
+      - name: Install Kotlin/Native
         if: matrix.language == 'kotlin_native'
-        with:
-          version: 1.9.24
-          install-native: true
+        env:
+          KOTLIN_NATIVE_VERSION: 1.9.24
+        run: |
+          curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
+            -o "${RUNNER_TEMP}/kotlin-native.tar.gz" \
+            "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/${KOTLIN_NATIVE_VERSION}/kotlin-native-prebuilt-${KOTLIN_NATIVE_VERSION}-linux-x86_64.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/kotlin-native.tar.gz" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/kotlin-native-prebuilt-linux-x86_64-${KOTLIN_NATIVE_VERSION}/bin" >> "$GITHUB_PATH"
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
         if: matrix.language == 'wasm'
         with:
