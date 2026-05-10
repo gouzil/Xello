@@ -1,310 +1,119 @@
 # Xello
 
-[English README](README.md)
+[English README](README.md) | [使用方式](docs/usage.zh-CN.md) | [Usage in English](docs/usage.md) | [贡献指南](CONTRIBUTING.zh-CN.md)
 
-[贡献指南](CONTRIBUTING.zh-CN.md)
+Xello 是一个跨语言 Hello World 调用矩阵。每种支持语言都是实际入口 runner，每种支持语言也都可以作为被调用方。
 
-Xello 是一个跨语言 Hello World 调用矩阵。现在的设计不是“只能从 Python 脚本启动”，而是每种语言都有自己的 runner；任意语言都可以作为入口，任意语言也都可以作为被调用方。
+这个 README 只强调结果：
 
-当前支持语言：
+- 每种语言都有自己的 runner。
+- 实际进入矩阵的语言由 `build/xello_languages.json` 记录。
+- 直接调用、fanout、自定义链条、完整矩阵都会输出结构化边结果。
+- 每条边都有 `caller`、`callee`、`bridge`、`message`、`output` 和正整数 `duration_ns`。
+- Benchmark 同时记录 caller 内部桥接耗时和 benchmark harness 子进程往返耗时。
 
-- Python
-- C
-- C++
-- Go
-- Rust
-- Zig
-- Kotlin/Native
-- WebAssembly
+## 当前矩阵
 
-每个 runner 都支持直接调用、单个 caller 快速调用所有支持语言、执行自定义链条、执行完整矩阵：
+完整 Docker 工具链目标支持这些一等语言：
 
-```sh
-make matrix
-make fanout FROM=c
-make chain CHAIN=c:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:wasm,wasm:c
-make fanout-from RUNNER=rust FROM=go
-make fanout-from RUNNER=cpp FROM=rust
-make fanout-from RUNNER=zig FROM=kotlin_native
-make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
-```
+| 语言 | Runner | Provider 路线 |
+| --- | --- | --- |
+| Python | `runners/python/xello_python.py` | Python direct import、`ctypes`、PyO3 extension，或 C ABI provider |
+| C | `build/bin/xello_c` | Native C runner 和 C provider |
+| C++ | `build/bin/xello_cpp` | Native C++ runner/provider、C ABI provider，以及 `extern "C"` C-provider 变体 |
+| Go | `build/bin/xello_go` | Native Go runner/provider over cgo/C ABI |
+| Rust | `build/bin/xello_rust` | Native Rust runner/provider、PyO3 embedded Python，以及 `libloading` |
+| Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
+| Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Kotlin/Native runner 加 C ABI shim |
+| WebAssembly | `runners/wasm/xello_wasm.py` | WAT module、WebAssembly runtime host 和 C ABI shim |
 
-链条格式是逗号分隔的 `caller:callee`。每条边都会由该边的 caller runner 执行，所以可以从 Python、C、C++、Go、Rust、Zig、Kotlin/Native、WebAssembly 任意语言入口启动。
+Docker benchmark 镜像会构建完整矩阵。下面快照里的 `build/xello_languages.json` 包含全部 8 种语言，`planned_languages` 为空，所以即使宿主机没有 Zig、Kotlin/Native、WebAssembly 工具链，benchmark 也能覆盖这些可选路径。
 
-`fanout` 是“单个语言到所有支持语言”的快速命令。例如工具链完整时，`make fanout FROM=c` 会依次运行 `c -> python`、`c -> c`、`c -> cpp`、`c -> go`、`c -> rust`、`c -> zig`、`c -> kotlin_native`、`c -> wasm`。
+## 结果形状
 
-## 调用桥接策略
-
-优先使用成熟的语言桥接库；只有没有合适成熟桥接时，才使用 C ABI/FFI 作为兜底。
-
-当前矩阵里的代表性桥接：
-
-- `python -> rust`：PyO3 扩展模块。
-- `rust -> python`：PyO3 embedded Python。
-- `python -> c`：Python 标准库 `ctypes`。
-- `c -> python`：Python/C API。
-- `go/cpp -> python`：基于 Python/C API 的 Python provider 动态库。
-- `rust -> c`：Rust `libloading` crate。
-- `go -> c`：cgo over C ABI。
-- `cpp -> c/go/rust/zig/kotlin_native/wasm`：C++ `dlopen` over C ABI。
-- `cpp -> c`：可选的 `extern "C"` 声明直连 C provider。
-- `python/c/go/rust/cpp -> cpp`：C++ provider 暴露 C ABI。
-- `python/c/cpp/go/rust -> zig`：Zig provider 暴露 C ABI。
-- `python/c/cpp/go/rust -> kotlin_native`：Kotlin/Native provider 暴露 C ABI。
-- `python/c/cpp/go/rust -> wasm`：WebAssembly provider 通过 C ABI shim 暴露。
-- `go -> rust`、`rust -> go`、`python -> go`、`c -> rust`、`c -> go`：C ABI 兜底。
-
-每条结果都会包含 caller、callee、bridge、hello world 消息和调用耗时：
+人类可读输出：
 
 ```text
 python runner -> rust implementation via PyO3: hello world from rust implementation, called by python (duration_ns=...)
 ```
 
-结构化输出：
+JSON 输出包含同一组可脚本处理字段：
 
-```sh
-python3 tools/xello.py --json matrix
+```json
+{
+  "bridge": "PyO3",
+  "callee": "rust",
+  "caller": "python",
+  "duration_ns": 910452,
+  "message": "hello world from rust implementation, called by python",
+  "output": "python runner -> rust implementation via PyO3: hello world from rust implementation, called by python"
+}
 ```
 
-## 技术路线
+## 桥接结果
 
-后续扩展语言时，Xello 会优先选择能稳定产出 native 可执行文件、shared library，或者有明确跨平台 bytecode/runtime 交付模型的语言。判断标准不是“语言是否流行”，而是能否在 CI 中可靠构建、能否暴露清晰调用边界、能否和现有 runner/provider 矩阵组合。
+Xello 优先使用成熟语言桥接库。没有合适成熟桥接时，才使用 C ABI 作为兜底边界。
 
-优先支持：
-
-| 语言/目标 | 路线 | 说明 |
-| --- | --- | --- |
-| C++ | 已接入 native runner/provider | 当前通过 C ABI 暴露 provider，通过 `dlopen` 调用其他 provider。 |
-| Zig | 已接入 native runner/provider | 安装 `zig` 后会进入矩阵。 |
-| Kotlin/Native | 已接入 native runner/provider | 安装 `kotlinc-native` 后会进入矩阵。 |
-| WebAssembly | 已接入 WAT module、C ABI shim 和 Python runtime runner | 安装 `wasm-tools` 后会进入矩阵。 |
-
-构建后可以查看实际进入矩阵的语言和被跳过的可选语言：
-
-```sh
-cat build/xello_languages.json
-```
-
-可以支持，但需要明确边界：
-
-| 语言/目标 | 路线 | 边界 |
-| --- | --- | --- |
-| Java | JVM bytecode / GraalVM Native Image | JVM bytecode 跨平台稳定；Native Image 跨平台构建限制更多。 |
-| Kotlin/JVM | JVM bytecode | 和 Java 一样，运行依赖 JVM。 |
-| C#/.NET | .NET runtime / Native AOT | Native AOT 可以做部分 cross-arch；cross-OS 通常需要目标 OS runner。 |
-| Dart | `dart compile exe` | 适合可执行文件；不适合作为通用 shared provider。 |
-| JavaScript / Node.js | Node SEA / Bun / Deno compile | 更像打包 runtime + JS，不是传统 native library。 |
-| TypeScript | TS -> JS -> Node/Bun/Deno | 需要先转成 JavaScript，再进入 JS runtime 打包链路。 |
-| Swift | Swift toolchain | 跨平台可做；Apple 平台强依赖 macOS/Xcode，跨 OS 不如 Zig/Go/Rust 直接。 |
-| Objective-C | Clang + ObjC runtime | 语法可编译；Foundation/Cocoa 和 ObjC runtime 强依赖目标平台。 |
-| Lua | 嵌入 Lua runtime | Lua 脚本不是 native cross-compile；适合作为嵌入式 runtime 路线。 |
-
-暂不作为交叉编译一等支持：
-
-| 语言/目标 | 原因 |
+| 边 | 已选择桥接 |
 | --- | --- |
-| Ruby | 通常依赖 Ruby runtime；可做 mruby 或扩展交叉编译，但不是通用稳定路线。 |
-| PHP | 可嵌入 runtime，但跨平台 native provider 成本高。 |
-| R | 主要依赖 R runtime/package 生态，不适合作为 native provider。 |
-| Julia | PackageCompiler 可产出 app/library，但跨平台通常仍需要目标平台构建。 |
-| Assembly | 源码本身强绑定目标架构；只能按架构分别维护，不能做通用语言层支持。 |
+| `python -> rust` | PyO3 extension module |
+| `rust -> python` | 默认 PyO3 embedded Python，也可 benchmark Python/C API provider |
+| `python -> c` | Python `ctypes` 标准库 |
+| `c -> python` | Python/C API |
+| `go/cpp -> python` | 基于 Python/C API 的 Python provider 动态库 |
+| `rust -> c` | Rust `libloading` crate |
+| `go -> c` | cgo over C ABI |
+| `cpp -> c` | 默认 `dlopen` over C ABI，也提供直接 `extern "C"` provider 变体 |
+| `python/c/go/rust/cpp -> cpp` | C++ provider 暴露 C ABI |
+| `python/c/go/rust/cpp -> zig` | Zig provider 暴露 C ABI |
+| `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider 通过 C ABI shim 暴露 |
+| `python/c/go/rust/cpp -> wasm` | WebAssembly provider 通过 C ABI shim 暴露 |
 
-## 入口命令
+## Benchmark 快照
 
-构建：
-
-```sh
-make build
-```
-
-默认从 Python runner 运行：
-
-```sh
-make matrix
-make fanout FROM=c
-make chain CHAIN=python:c,c:rust,rust:go,go:python
-```
-
-从指定语言 runner 启动：
-
-```sh
-make matrix-from RUNNER=python
-make matrix-from RUNNER=c
-make matrix-from RUNNER=cpp
-make matrix-from RUNNER=go
-make matrix-from RUNNER=rust
-make matrix-from RUNNER=zig
-make matrix-from RUNNER=kotlin_native
-make matrix-from RUNNER=wasm
-make fanout-from RUNNER=cpp FROM=rust
-make fanout-from RUNNER=rust FROM=go
-make fanout-from RUNNER=zig FROM=kotlin_native
-make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
-```
-
-直接调用单个 runner：
-
-```sh
-python3 runners/python/xello_python.py call cpp
-python3 runners/python/xello_python.py fanout c
-./build/bin/xello_c call python
-./build/bin/xello_c fanout cpp
-./build/bin/xello_cpp call python
-./build/bin/xello_cpp fanout rust
-./build/bin/xello_go fanout rust
-./build/bin/xello_go call c
-./build/bin/xello_rust call go
-./build/bin/xello_rust call cpp
-./build/bin/xello_zig call kotlin_native
-./build/bin/xello_kotlin_native.kexe call wasm
-python3 runners/wasm/xello_wasm.py fanout zig
-```
-
-## 测试
-
-```sh
-make test
-```
-
-测试覆盖：
-
-- 当前机器已构建语言的完整 caller/callee 矩阵。
-- 单个 caller fanout 到所有支持语言。
-- 可以通过任意已构建 runner 启动链条。
-- 每个 runner 都能直接调用每种语言。
-- 每条边都有 `duration_ns` 耗时。
-- 关键成熟桥接选择，例如 `python -> rust` 必须走 PyO3。
-
-## Benchmark
-
-跑完整 caller/callee 矩阵的基准：
-
-```sh
-make benchmark
-```
-
-快速对比单个 caller 到所有支持语言：
-
-```sh
-make benchmark-from FROM=c BENCH_ARGS="--iterations 50 --warmup 5"
-```
-
-Benchmark 命令会读取 `build/xello_languages.json`，所以完整矩阵和 fanout 模式会包含所有已经实际构建成功的语言。在 Docker 工具链下，按语言拆开的 fanout benchmark 是：
-
-```sh
-python3 tools/benchmark.py fanout python
-python3 tools/benchmark.py fanout c
-python3 tools/benchmark.py fanout cpp
-python3 tools/benchmark.py fanout go
-python3 tools/benchmark.py fanout rust
-python3 tools/benchmark.py fanout zig
-python3 tools/benchmark.py fanout kotlin_native
-python3 tools/benchmark.py fanout wasm
-```
-
-等价的 Make 入口是：
-
-```sh
-make benchmark-from FROM=python
-make benchmark-from FROM=c
-make benchmark-from FROM=cpp
-make benchmark-from FROM=go
-make benchmark-from FROM=rust
-make benchmark-from FROM=zig
-make benchmark-from FROM=kotlin_native
-make benchmark-from FROM=wasm
-```
-
-`build/xello_languages.json` 中出现在 `planned_languages` 里的语言不会进入 benchmark 输出。本机没有 Zig、Kotlin/Native 或 WebAssembly 工具链时，可以直接使用 Docker 镜像跑完整矩阵。
-
-Benchmark 会输出两组耗时：
-
-- `call_duration_ns`：caller runner 在语言桥接调用附近测到的耗时。
-- `total_duration_ns`：benchmark harness 调用 runner 子进程的完整往返耗时。
-
-当一条边有多种 bridge 实现时，benchmark 默认会把所有实现都输出出来；只有显式传 `--bridge` 时才收窄到单个实现。
-
-需要脚本处理时可以输出 JSON：
-
-```sh
-python3 tools/benchmark.py --json --iterations 50 matrix
-python3 tools/benchmark.py --json call python rust
-python3 tools/benchmark.py chain --edges "c:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:wasm,wasm:c"
-```
-
-Rust 调 Python 当前同时提供 PyO3 embedding 和 Python/C API provider。默认 benchmark 会输出两条：
-
-```sh
-python3 tools/benchmark.py call rust python
-```
-
-C++ 调 C 当前同时提供默认 `dlopen` 路径和 `extern "C"` 直连 C provider 路径：
-
-```sh
-python3 tools/benchmark.py call cpp c
-```
-
-只想看单条实现时再使用 `--bridge`：
-
-```sh
-python3 tools/benchmark.py call rust python --bridge pyo3
-python3 tools/benchmark.py call rust python --bridge capi
-python3 tools/benchmark.py call cpp c --bridge dlopen
-python3 tools/benchmark.py call cpp c --bridge extern-c
-```
-
-## 格式化
-
-Xello 使用 [`prek`](https://github.com/j178/prek) 做格式化和基础文件检查：
-
-```sh
-prek install
-make fmt
-```
-
-当前已有源码会格式化 Python、C/C++/Objective-C、Go、Rust。配置里也预留了 Zig、JavaScript/Node.js、TypeScript、Java、Kotlin/JVM、Kotlin/Native、C#/.NET、Swift、Dart、Ruby、PHP、Lua、R、Julia、Assembly、WebAssembly text 的成熟 formatter 入口；对应文件不存在时这些 hook 会自动跳过。
-
-已配置的 formatter：
-
-| 语言/文件类型 | Formatter |
-| --- | --- |
-| Python | Ruff |
-| C、C++、Objective-C | clang-format |
-| Go | gofmt |
-| Rust | rustfmt |
-| Zig | zig fmt |
-| JavaScript、Node.js、TypeScript | Prettier |
-| Java | google-java-format |
-| Kotlin/JVM、Kotlin/Native | ktfmt |
-| C#/.NET | dotnet format |
-| Swift | swift-format |
-| Dart | dart format |
-| Ruby | RuboCop |
-| PHP | PHP-CS-Fixer |
-| Lua | StyLua |
-| R | styler |
-| Julia | JuliaFormatter |
-| Assembly | asmfmt |
-| WebAssembly text | wat-fmt |
-
-## Docker
+快照命令：
 
 ```sh
 docker build -t xello .
-docker run --rm xello make test
-docker run --rm xello make fanout FROM=c
-docker run --rm xello make benchmark-from FROM=zig BENCH_ARGS="--iterations 5 --warmup 1"
-docker run --rm xello make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
+docker run --rm xello python3 tools/benchmark.py --iterations 10 --warmup 1 matrix
 ```
 
-## 项目结构
+容器环境：Linux x86_64，Python 3.11.15，Go 1.26.3，Rust 1.95.0，Zig 0.16.0，Kotlin/Native 1.9.24，wasm-tools 1.246.2。测量日期 2026-05-09，使用完整工具链构建后的 Docker 镜像。arm64 宿主机上 Docker 可能会通过 emulation 运行 linux/amd64 镜像，所以这些数字更适合作为完整、可复现的 Docker 矩阵快照，而不是跨机器通用性能承诺。
 
-- `runners/*`：每种语言自己的入口 runner。
-- `bindings/rust_python`：Python 调用 Rust 的 PyO3 扩展模块。
-- `providers/*`：C ABI 兜底 provider 共享库。
-- `build/xello_languages.json`：构建后生成的实际语言 manifest。
-- `include/xello.h`：共享兜底 ABI。
-- `tools/build.py`：构建共享库、runner 和绑定模块。
-- `tools/xello.py`：兼容入口，转到 Python runner。
-- `tools/run_from.py`：按语言选择 runner 的辅助入口。
-- `tests/test_xello.py`：矩阵、链条、bridge 和耗时测试。
+| Caller | Callee | Bridge | call mean | call p95 | total mean |
+| --- | --- | --- | ---: | ---: | ---: |
+| `python` | `python` | python direct import | 17,767 ns | 42,375 ns | 117.29 ms |
+| `c` | `c` | direct C function | 355,598 ns | 385,539 ns | 10.10 ms |
+| `go` | `go` | direct Go function | 79,245 ns | 168,665 ns | 29.83 ms |
+| `rust` | `rust` | direct Rust function | 201,282 ns | 265,623 ns | 15.09 ms |
+| `cpp` | `cpp` | direct C++ function | 552,213 ns | 588,704 ns | 10.50 ms |
+| `zig` | `zig` | direct Zig function | 261,631 ns | 274,331 ns | 10.51 ms |
+| `kotlin_native` | `kotlin_native` | direct Kotlin/Native function | 110,624 ns | 132,124 ns | 16.28 ms |
+| `wasm` | `wasm` | WebAssembly runtime host | 12,967 ns | 15,792 ns | 116.20 ms |
+| `python` | `rust` | PyO3 | 910,452 ns | 1,004,244 ns | 121.35 ms |
+| `rust` | `python` | PyO3 embedded Python | 337,460 ns | 365,123 ns | 67.11 ms |
+| `rust` | `python` | Python shared library via Python/C API | 52.04 ms | 53.39 ms | 68.83 ms |
+| `cpp` | `c` | C shared library via C ABI | 377,152 ns | 393,122 ns | 11.83 ms |
+| `cpp` | `c` | C provider linked through `extern "C"` | 518,313 ns | 543,789 ns | 10.89 ms |
+| `python` | `zig` | Zig shared library via C ABI | 609,655 ns | 720,996 ns | 113.97 ms |
+| `c` | `kotlin_native` | Kotlin/Native dynamic library via C ABI | 2.31 ms | 2.55 ms | 17.65 ms |
+| `go` | `wasm` | WebAssembly C ABI shim | 340,194 ns | 367,748 ns | 29.91 ms |
+| `kotlin_native` | `cpp` | C++ shared library via C ABI | 227,565 ns | 250,956 ns | 20.08 ms |
+| `wasm` | `kotlin_native` | kotlin_native shared library via C ABI | 2.60 ms | 2.81 ms | 119.04 ms |
+
+`call mean` 和 `call p95` 是 caller runner 在语言桥接调用附近测到的耗时。`total mean` 是 benchmark harness 调用 runner 子进程的完整往返耗时。
+
+完整矩阵、fanout、Docker、JSON 和多 bridge 变体 benchmark 命令在 [使用方式](docs/usage.zh-CN.md) 中。
+
+## 技术方向
+
+后续扩展语言时，Xello 优先选择能稳定产出 native 可执行文件、shared library，或者有明确跨平台 bytecode/runtime 交付模型的目标。判断标准不是语言热度，而是能否在 CI 中可靠构建、能否暴露清晰调用边界、能否和 runner/provider 矩阵组合。
+
+| 语言/目标 | 当前路线 | 边界 |
+| --- | --- | --- |
+| C++ | 已实现 native runner/provider | Provider 暴露 C ABI；runner 也包含直接 C `extern "C"` 变体 |
+| Zig | 已实现可选 native runner/provider | 安装 `zig` 后进入矩阵 |
+| Kotlin/Native | 已实现可选 native runner/provider | 安装 `kotlinc-native` 后进入矩阵 |
+| WebAssembly | 已实现可选 WAT module、C ABI shim 和 Python runtime runner | 安装 `wasm-tools` 后进入矩阵 |
+| Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | 可以支持，但需要明确 runtime 或平台边界 | 成为一等语言前需要先定义目标构建/运行策略 |
+| Ruby/PHP/R/Julia/Assembly | 暂不作为一等支持 | runtime、打包或架构绑定问题使它们不适合做通用矩阵目标 |

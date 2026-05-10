@@ -114,12 +114,19 @@ class XelloTests(unittest.TestCase):
         self.assertTrue((ROOT / "runners/kotlin_native/xello_kotlin_runner.kt").exists())
         self.assertTrue((ROOT / "runners/wasm/xello_wasm.py").exists())
 
-    def test_makefile_and_readmes_cover_supported_language_examples(self) -> None:
+    def test_makefile_and_usage_docs_cover_supported_language_examples(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         readmes = {
             "README.md": (ROOT / "README.md").read_text(encoding="utf-8"),
             "README.zh-CN.md": (ROOT / "README.zh-CN.md").read_text(encoding="utf-8"),
         }
+        usage_docs = {
+            "docs/usage.md": (ROOT / "docs/usage.md").read_text(encoding="utf-8"),
+            "docs/usage.zh-CN.md": (ROOT / "docs/usage.zh-CN.md").read_text(encoding="utf-8"),
+        }
+
+        self.assertIn("docs/usage.md", readmes["README.md"])
+        self.assertIn("docs/usage.zh-CN.md", readmes["README.zh-CN.md"])
 
         for language in languages():
             with self.subTest(language=language, file="Makefile"):
@@ -135,7 +142,7 @@ class XelloTests(unittest.TestCase):
                 )
                 self.assertIn(expected_runner, makefile)
 
-            for name, content in readmes.items():
+            for name, content in usage_docs.items():
                 with self.subTest(language=language, file=name):
                     self.assertIn(f"make matrix-from RUNNER={language}", content)
                     self.assertIn(f"make benchmark-from FROM={language}", content)
