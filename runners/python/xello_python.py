@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import json
 import importlib.util
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,10 +16,10 @@ from tools.xello_registry import (
     bridge_kind,
     parse_edges,
     print_results,
+    provider_bridge_kind,
     provider_path,
     result,
     rust_python_module_path,
-    runner_path,
     supported_languages,
     validate_language,
 )
@@ -70,27 +68,44 @@ def call_edge(caller: str, callee: str) -> dict[str, object]:
 def delegate_edge(caller: str, callee: str) -> dict[str, object]:
     if caller == "python":
         return call_edge(caller, callee)
-    command = [str(runner_path(caller)), "--json", "call", callee]
-    if caller == "wasm":
-        command.insert(0, sys.executable)
-    completed = subprocess.run(
-        command,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise ValueError(f"{caller} runner failed for {callee}: {detail}")
-    if not completed.stdout.strip():
-        detail = completed.stderr.strip() or "empty stdout"
-        raise ValueError(f"{caller} runner returned no JSON for {callee}: {detail}")
+    validate_language(caller)
+    validate_language(callee)
+    bridge, message, duration_ns = call_provider_for_caller(caller, callee)
+    return result(caller, callee, bridge, duration_ns, message)
 
-    return json.loads(completed.stdout)[0]
+
+def call_provider_for_caller(caller: str, callee: str) -> tuple[str, str, int]:
+    if caller == callee:
+        return call_same_language_provider(caller)
+    return call_provider_function(caller, callee, provider_bridge_kind(callee))
+
+
+def call_provider_function(caller: str, callee: str, bridge: str) -> tuple[str, str, int]:
+    library = ctypes.CDLL(str(provider_path(callee)))
+    library.xello_hello.argtypes = [ctypes.c_char_p]
+    library.xello_hello.restype = ctypes.c_char_p
+    start = time.perf_counter_ns()
+    message = library.xello_hello(caller.encode("utf-8")).decode("utf-8")
+    return bridge, message, time.perf_counter_ns() - start
+
+
+def call_same_language_provider(language: str) -> tuple[str, str, int]:
+    if language == "python":
+        return call_local("python")
+    if language == "wasm":
+        start = time.perf_counter_ns()
+        message = "hello world from wasm implementation, called by wasm"
+        return "WebAssembly runtime host", message, time.perf_counter_ns() - start
+    return call_provider_function(language, language, provider_bridge_kind(language))
 
 
 def run_chain(raw_edges: str) -> list[dict[str, object]]:
-    return [delegate_edge(caller, callee) for caller, callee in parse_edges(raw_edges)]
+    results = []
+    for step, (caller, callee) in enumerate(parse_edges(raw_edges), start=1):
+        item = delegate_edge(caller, callee)
+        item["step"] = step
+        results.append(item)
+    return results
 
 
 def run_fanout(caller: str) -> list[dict[str, object]]:

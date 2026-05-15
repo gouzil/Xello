@@ -46,7 +46,9 @@ make fanout-from RUNNER=zig FROM=kotlin_native
 make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
 ```
 
-The chain format is a comma-separated list of `caller:callee` edges. Each edge is executed by that edge's caller runner, so a chain can start from any built language instead of treating Python as the hidden orchestrator.
+The chain format is a comma-separated list of `caller:callee` edges. The selected entrypoint executes the listed edges through in-process provider functions instead of starting another runner executable for each hop, so a chain can start from any built language without making Python the hidden orchestrator.
+
+Chain output includes every selected edge in order. Human output prefixes each edge with `step=N`, and JSON output includes the same `step` field beside that edge's `duration_ns`.
 
 ## Direct Runners
 
@@ -118,6 +120,8 @@ Benchmark output includes two duration groups:
 
 - `call_duration_ns`: duration reported by the caller runner around the language bridge call.
 - `total_duration_ns`: full subprocess round trip used by the benchmark harness.
+
+For `benchmark.py chain`, each row or JSON item also includes `step`, so every hop's call and subprocess duration summary can be inspected independently.
 
 Use JSON output when comparing results in scripts:
 

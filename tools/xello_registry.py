@@ -50,6 +50,17 @@ FALLBACK_BRIDGE_KIND = {
     ("rust", "go"),
 }
 
+PROVIDER_BRIDGE_KIND = {
+    "python": "Python provider function via Python/C API",
+    "c": "C provider function via C ABI",
+    "go": "Go provider function via C ABI",
+    "rust": "Rust provider function via C ABI",
+    "cpp": "C++ provider function via C ABI",
+    "zig": "Zig provider function via C ABI",
+    "kotlin_native": "Kotlin/Native provider function via C ABI",
+    "wasm": "WebAssembly C ABI shim",
+}
+
 
 def shared_ext() -> str:
     return ".dylib" if platform.system() == "Darwin" else ".so"
@@ -91,6 +102,12 @@ def bridge_kind(caller: str, callee: str) -> str:
     if callee in FALLBACK_CALLEE_BRIDGE_KIND:
         return FALLBACK_CALLEE_BRIDGE_KIND[callee]
     raise KeyError((caller, callee))
+
+
+def provider_bridge_kind(callee: str) -> str:
+    if callee in PROVIDER_BRIDGE_KIND:
+        return PROVIDER_BRIDGE_KIND[callee]
+    raise KeyError(callee)
 
 
 def python_extension_suffix() -> str:
@@ -145,4 +162,5 @@ def print_results(results: list[dict[str, object]], *, as_json: bool) -> None:
         print(json.dumps(results, indent=2, sort_keys=True))
         return
     for item in results:
-        print(f"{item['output']} (duration_ns={item['duration_ns']})")
+        step = f"step={item['step']} " if "step" in item else ""
+        print(f"{step}{item['output']} (duration_ns={item['duration_ns']})")

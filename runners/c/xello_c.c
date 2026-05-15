@@ -63,6 +63,34 @@ static const char *bridge_kind(const char *callee) {
     return NULL;
 }
 
+static const char *provider_bridge_kind(const char *callee) {
+    if (strcmp(callee, "python") == 0) {
+        return "Python provider function via Python/C API";
+    }
+    if (strcmp(callee, "c") == 0) {
+        return "C provider function via C ABI";
+    }
+    if (strcmp(callee, "go") == 0) {
+        return "Go provider function via C ABI";
+    }
+    if (strcmp(callee, "rust") == 0) {
+        return "Rust provider function via C ABI";
+    }
+    if (strcmp(callee, "cpp") == 0) {
+        return "C++ provider function via C ABI";
+    }
+    if (strcmp(callee, "zig") == 0) {
+        return "Zig provider function via C ABI";
+    }
+    if (strcmp(callee, "kotlin_native") == 0) {
+        return "Kotlin/Native provider function via C ABI";
+    }
+    if (strcmp(callee, "wasm") == 0) {
+        return "WebAssembly C ABI shim";
+    }
+    return NULL;
+}
+
 static const char *c_hello(const char *caller) {
     static char buffer[256];
     snprintf(buffer, sizeof(buffer), "hello world from c implementation, called by %s", caller);
@@ -134,6 +162,31 @@ static int call_provider(const char *callee, char *message, size_t message_size,
 
     uint64_t start = now_ns();
     const char *raw = hello("c");
+    snprintf(message, message_size, "%s", raw);
+    *duration_ns = elapsed_ns_since(start);
+    dlclose(handle);
+    return 0;
+}
+
+static int call_provider_as(const char *caller, const char *callee, char *message, size_t message_size,
+                            uint64_t *duration_ns) {
+    char path[512];
+    provider_path(callee, path, sizeof(path));
+    void *handle = dlopen(path, RTLD_NOW);
+    if (handle == NULL) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        return 1;
+    }
+
+    xello_hello_fn hello = (xello_hello_fn)dlsym(handle, "xello_hello");
+    if (hello == NULL) {
+        fprintf(stderr, "provider is missing xello_hello\n");
+        dlclose(handle);
+        return 1;
+    }
+
+    uint64_t start = now_ns();
+    const char *raw = hello(caller);
     snprintf(message, message_size, "%s", raw);
     *duration_ns = elapsed_ns_since(start);
     dlclose(handle);
@@ -216,81 +269,24 @@ static void load_languages(const char **languages, size_t *count) {
     }
 }
 
-static void edge_command(const char *caller, const char *callee, int json_output, char *buffer, size_t size) {
-    const char *json_flag = json_output ? "--json " : "";
-    if (strcmp(caller, "python") == 0) {
-        snprintf(buffer, size, "python3 tools/run_from.py python %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "c") == 0) {
-        snprintf(buffer, size, "build/bin/xello_c %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "go") == 0) {
-        snprintf(buffer, size, "build/bin/xello_go %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "rust") == 0) {
-        snprintf(buffer, size, "build/bin/xello_rust %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "cpp") == 0) {
-        snprintf(buffer, size, "build/bin/xello_cpp %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "kotlin_native") == 0) {
-        snprintf(buffer, size, "build/bin/xello_kotlin_native.kexe %scall %s", json_flag, callee);
-    } else if (strcmp(caller, "wasm") == 0) {
-        snprintf(buffer, size, "python3 runners/wasm/xello_wasm.py %scall %s", json_flag, callee);
-    } else {
-        snprintf(buffer, size, "build/bin/xello_%s %scall %s", caller, json_flag, callee);
-    }
-}
-
-static int run_edge_command_json(const char *caller, const char *callee, int *first) {
-    char command[512];
-    edge_command(caller, callee, 1, command, sizeof(command));
-
-    FILE *pipe = popen(command, "r");
-    if (pipe == NULL) {
-        fprintf(stderr, "failed to run: %s\n", command);
-        return 1;
-    }
-
-    char output[4096];
-    size_t used = fread(output, 1, sizeof(output) - 1, pipe);
-    output[used] = '\0';
-    int rc = pclose(pipe);
-    if (rc != 0) {
-        fprintf(stderr, "runner command failed: %s\n", command);
-        return 1;
-    }
-
-    char *start = strchr(output, '[');
-    char *end = strrchr(output, ']');
-    if (start == NULL || end == NULL || end <= start) {
-        fprintf(stderr, "runner returned invalid json: %s\n", output);
-        return 1;
-    }
-    start++;
-    while (*start == ' ' || *start == '\n' || *start == '\t') {
-        start++;
-    }
-    while (end > start && (end[-1] == ' ' || end[-1] == '\n' || end[-1] == '\t')) {
-        end--;
-    }
-    *end = '\0';
-
+static int print_matrix_edge_json(const char *caller, const char *callee, const char *bridge, uint64_t duration_ns,
+                                  const char *message, int *first, size_t step) {
     if (!*first) {
         printf(",\n");
     }
-    printf("  %s", start);
+    printf("  {");
+    if (step > 0) {
+        printf("\"step\":%zu,", step);
+    }
+    printf("\"caller\":\"%s\",\"callee\":\"%s\",\"bridge\":\"%s\",\"duration_ns\":%llu,"
+           "\"message\":\"%s\",\"output\":\"%s runner -> %s implementation via %s: %s\"}",
+           caller, callee, bridge, (unsigned long long)positive_duration(duration_ns), message, caller, callee, bridge,
+           message);
     *first = 0;
     return 0;
 }
 
-static int run_edge_command_human(const char *caller, const char *callee) {
-    char command[512];
-    edge_command(caller, callee, 0, command, sizeof(command));
-    int rc = system(command);
-    if (rc != 0) {
-        fprintf(stderr, "runner command failed: %s\n", command);
-        return 1;
-    }
-    return 0;
-}
-
-static int run_edge(const char *caller, const char *callee, int json_output, int *first_json) {
+static int run_edge(const char *caller, const char *callee, int json_output, int *first_json, size_t step) {
     if (!is_language(caller)) {
         fprintf(stderr, "unknown language: %s\n", caller);
         return 2;
@@ -299,10 +295,45 @@ static int run_edge(const char *caller, const char *callee, int json_output, int
         fprintf(stderr, "unknown language: %s\n", callee);
         return 2;
     }
-    if (json_output) {
-        return run_edge_command_json(caller, callee, first_json);
+    const char *bridge = strcmp(caller, "c") == 0 ? bridge_kind(callee) : provider_bridge_kind(callee);
+    if (bridge == NULL) {
+        fprintf(stderr, "unknown language: %s\n", callee);
+        return 2;
     }
-    return run_edge_command_human(caller, callee);
+    char message[512];
+    uint64_t duration_ns = 0;
+    int rc = 0;
+    if (strcmp(caller, "c") == 0) {
+        if (strcmp(callee, "python") == 0) {
+            rc = call_python(message, sizeof(message), &duration_ns);
+        } else if (strcmp(callee, "c") == 0) {
+            uint64_t start = now_ns();
+            const char *raw = c_hello("c");
+            snprintf(message, sizeof(message), "%s", raw);
+            duration_ns = elapsed_ns_since(start);
+        } else {
+            rc = call_provider(callee, message, sizeof(message), &duration_ns);
+        }
+    } else if (strcmp(caller, "wasm") == 0 && strcmp(callee, "wasm") == 0) {
+        uint64_t start = now_ns();
+        snprintf(message, sizeof(message), "hello world from wasm implementation, called by wasm");
+        duration_ns = elapsed_ns_since(start);
+        bridge = "WebAssembly runtime host";
+    } else {
+        rc = call_provider_as(caller, callee, message, sizeof(message), &duration_ns);
+    }
+    if (rc != 0) {
+        return rc;
+    }
+    if (json_output) {
+        return print_matrix_edge_json(caller, callee, bridge, duration_ns, message, first_json, step);
+    }
+    if (step > 0) {
+        printf("step=%zu ", step);
+    }
+    printf("%s runner -> %s implementation via %s: %s (duration_ns=%llu)\n", caller, callee, bridge, message,
+           (unsigned long long)positive_duration(duration_ns));
+    return 0;
 }
 
 static int run_matrix(int json_output) {
@@ -315,7 +346,7 @@ static int run_matrix(int json_output) {
     }
     for (size_t caller = 0; caller < language_count; caller++) {
         for (size_t callee = 0; callee < language_count; callee++) {
-            int rc = run_edge(languages[caller], languages[callee], json_output, &first);
+            int rc = run_edge(languages[caller], languages[callee], json_output, &first, 0);
             if (rc != 0) {
                 return rc;
             }
@@ -340,7 +371,7 @@ static int run_fanout(const char *caller, int json_output) {
         printf("[\n");
     }
     for (size_t callee = 0; callee < language_count; callee++) {
-        int rc = run_edge(caller, languages[callee], json_output, &first_json);
+        int rc = run_edge(caller, languages[callee], json_output, &first_json, 0);
         if (rc != 0) {
             return rc;
         }
@@ -356,6 +387,7 @@ static int run_chain(const char *raw_edges, int json_output) {
     snprintf(edges, sizeof(edges), "%s", raw_edges);
     int first_json = 1;
     int seen_edge = 0;
+    size_t step = 1;
     if (json_output) {
         printf("[\n");
     }
@@ -374,11 +406,12 @@ static int run_chain(const char *raw_edges, int json_output) {
         *separator = '\0';
         const char *caller = edge;
         const char *callee = separator + 1;
-        int rc = run_edge(caller, callee, json_output, &first_json);
+        int rc = run_edge(caller, callee, json_output, &first_json, step);
         if (rc != 0) {
             return rc;
         }
         seen_edge = 1;
+        step++;
     }
 
     if (!seen_edge) {

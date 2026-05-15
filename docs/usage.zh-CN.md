@@ -46,7 +46,9 @@ make fanout-from RUNNER=zig FROM=kotlin_native
 make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
 ```
 
-链条格式是逗号分隔的 `caller:callee`。每条边都会由该边的 caller runner 执行，所以链条可以从任意已构建语言开始，而不是让 Python 成为隐藏编排入口。
+链条格式是逗号分隔的 `caller:callee`。选中的入口会在当前进程里通过 provider 函数执行这些边，而不是每一跳再启动另一个 runner 可执行文件，所以链条可以从任意已构建语言开始，也不会让 Python 成为隐藏编排入口。
+
+链条输出会按顺序保留每条选中的边。人类可读输出会在每条边前加 `step=N`，JSON 输出也会在该边的 `duration_ns` 旁边包含同一个 `step` 字段。
 
 ## 直接调用 Runner
 
@@ -118,6 +120,8 @@ Benchmark 输出两组耗时：
 
 - `call_duration_ns`：caller runner 在语言桥接调用附近测到的耗时。
 - `total_duration_ns`：benchmark harness 调用 runner 子进程的完整往返耗时。
+
+`benchmark.py chain` 的每一行或 JSON item 也会包含 `step`，方便单独查看连跳中每一跳的调用耗时和子进程往返耗时汇总。
 
 需要脚本比较时使用 JSON 输出：
 
