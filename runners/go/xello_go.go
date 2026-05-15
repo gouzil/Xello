@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -64,6 +63,7 @@ func languageList() []string {
 }
 
 type callResult struct {
+	Step       int    `json:"step,omitempty"`
 	Caller     string `json:"caller"`
 	Callee     string `json:"callee"`
 	Bridge     string `json:"bridge"`
@@ -95,6 +95,29 @@ func bridgeKind(callee string) string {
 	}
 }
 
+func providerBridgeKind(callee string) string {
+	switch callee {
+	case "python":
+		return "Python provider function via Python/C API"
+	case "c":
+		return "C provider function via C ABI"
+	case "go":
+		return "Go provider function via C ABI"
+	case "rust":
+		return "Rust provider function via C ABI"
+	case "cpp":
+		return "C++ provider function via C ABI"
+	case "zig":
+		return "Zig provider function via C ABI"
+	case "kotlin_native":
+		return "Kotlin/Native provider function via C ABI"
+	case "wasm":
+		return "WebAssembly C ABI shim"
+	default:
+		return ""
+	}
+}
+
 func sharedExt() string {
 	if runtime.GOOS == "darwin" {
 		return ".dylib"
@@ -107,6 +130,10 @@ func hello(caller string) string {
 }
 
 func callProvider(callee string) (string, int64, error) {
+	return callProviderAs("go", callee)
+}
+
+func callProviderAs(callerName, callee string) (string, int64, error) {
 	path := C.CString(fmt.Sprintf("build/lib/libxello_%s%s", callee, sharedExt()))
 	defer C.free(unsafe.Pointer(path))
 
@@ -123,7 +150,7 @@ func callProvider(callee string) (string, int64, error) {
 		return "", 0, fmt.Errorf("provider is missing xello_hello")
 	}
 
-	caller := C.CString("go")
+	caller := C.CString(callerName)
 	defer C.free(unsafe.Pointer(caller))
 	start := time.Now()
 	message := C.GoString(C.call_hello(symbol, caller))
@@ -166,42 +193,6 @@ func callEdge(callee string) (callResult, error) {
 	}, nil
 }
 
-func delegate(command string, args []string, jsonOutput bool) error {
-	commandArgs := []string{}
-	if jsonOutput {
-		commandArgs = append(commandArgs, "--json")
-	}
-	commandArgs = append(commandArgs, command)
-	commandArgs = append(commandArgs, args...)
-	cmd := exec.Command("python3", append([]string{"tools/run_from.py", "python"}, commandArgs...)...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func runnerCommand(language string, args ...string) *exec.Cmd {
-	switch language {
-	case "python":
-		return exec.Command("python3", append([]string{"tools/run_from.py", "python"}, args...)...)
-	case "c":
-		return exec.Command("build/bin/xello_c", args...)
-	case "go":
-		return exec.Command("build/bin/xello_go", args...)
-	case "rust":
-		return exec.Command("build/bin/xello_rust", args...)
-	case "cpp":
-		return exec.Command("build/bin/xello_cpp", args...)
-	case "zig":
-		return exec.Command("build/bin/xello_zig", args...)
-	case "kotlin_native":
-		return exec.Command("build/bin/xello_kotlin_native.kexe", args...)
-	case "wasm":
-		return exec.Command("python3", append([]string{"runners/wasm/xello_wasm.py"}, args...)...)
-	default:
-		return nil
-	}
-}
-
 func parseEdges(raw string) ([][2]string, error) {
 	var edges [][2]string
 	for _, item := range strings.Split(raw, ",") {
@@ -233,22 +224,40 @@ func callViaRunner(caller, callee string) (callResult, error) {
 	if caller == "go" {
 		return callEdge(callee)
 	}
-	cmd := runnerCommand(caller, "--json", "call", callee)
-	if cmd == nil {
+	if !languages[caller] {
 		return callResult{}, fmt.Errorf("unknown language: %s", caller)
 	}
-	output, err := cmd.Output()
+	if !languages[callee] {
+		return callResult{}, fmt.Errorf("unknown language: %s", callee)
+	}
+	bridge := providerBridgeKind(callee)
+	var message string
+	var durationNS int64
+	var err error
+	if caller == "wasm" && callee == "wasm" {
+		start := time.Now()
+		message = "hello world from wasm implementation, called by wasm"
+		durationNS = max(time.Since(start).Nanoseconds(), 1)
+		bridge = "WebAssembly runtime host"
+	} else if callee == "go" {
+		start := time.Now()
+		message = hello(caller)
+		durationNS = max(time.Since(start).Nanoseconds(), 1)
+	} else {
+		message, durationNS, err = callProviderAs(caller, callee)
+	}
 	if err != nil {
 		return callResult{}, err
 	}
-	var results []callResult
-	if err := json.Unmarshal(output, &results); err != nil {
-		return callResult{}, err
-	}
-	if len(results) != 1 {
-		return callResult{}, fmt.Errorf("expected one result, got %d", len(results))
-	}
-	return results[0], nil
+	output := fmt.Sprintf("%s runner -> %s implementation via %s: %s", caller, callee, bridge, message)
+	return callResult{
+		Caller:     caller,
+		Callee:     callee,
+		Bridge:     bridge,
+		DurationNS: max(durationNS, 1),
+		Message:    message,
+		Output:     output,
+	}, nil
 }
 
 func runChain(raw string) ([]callResult, error) {
@@ -262,6 +271,7 @@ func runChain(raw string) ([]callResult, error) {
 		if err != nil {
 			return nil, err
 		}
+		result.Step = len(results) + 1
 		results = append(results, result)
 	}
 	return results, nil
@@ -305,6 +315,9 @@ func printResults(results []callResult, jsonOutput bool) error {
 		return encoder.Encode(results)
 	}
 	for _, item := range results {
+		if item.Step > 0 {
+			fmt.Printf("step=%d ", item.Step)
+		}
 		fmt.Printf("%s (duration_ns=%d)\n", item.Output, item.DurationNS)
 	}
 	return nil

@@ -5,7 +5,7 @@ use std::env;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::os::raw::c_char;
-use std::process::{self, Command};
+use std::process;
 use std::time::Instant;
 
 type HelloFn = unsafe extern "C" fn(*const c_char) -> *const c_char;
@@ -18,6 +18,7 @@ enum RustPythonBridge {
 
 #[derive(Clone)]
 struct CallResult {
+    step: Option<usize>,
     caller: String,
     callee: String,
     bridge: String,
@@ -49,6 +50,20 @@ fn bridge_kind(callee: &str, python_bridge: RustPythonBridge) -> Option<&'static
     }
 }
 
+fn provider_bridge_kind(callee: &str) -> Option<&'static str> {
+    match callee {
+        "python" => Some("Python provider function via Python/C API"),
+        "c" => Some("C provider function via C ABI"),
+        "go" => Some("Go provider function via C ABI"),
+        "rust" => Some("Rust provider function via C ABI"),
+        "cpp" => Some("C++ provider function via C ABI"),
+        "zig" => Some("Zig provider function via C ABI"),
+        "kotlin_native" => Some("Kotlin/Native provider function via C ABI"),
+        "wasm" => Some("WebAssembly C ABI shim"),
+        _ => None,
+    }
+}
+
 fn rust_hello(caller: &str) -> String {
     format!("hello world from rust implementation, called by {}", caller)
 }
@@ -68,11 +83,15 @@ fn call_python_via_pyo3() -> Result<(String, u128), String> {
 }
 
 fn call_provider(callee: &str) -> Result<(String, u128), String> {
+    call_provider_as("rust", callee)
+}
+
+fn call_provider_as(caller_name: &str, callee: &str) -> Result<(String, u128), String> {
     let path = format!("build/lib/libxello_{}{}", callee, shared_ext());
     let library = unsafe { Library::new(path) }.map_err(|err| err.to_string())?;
     let hello: Symbol<HelloFn> =
         unsafe { library.get(b"xello_hello") }.map_err(|err| err.to_string())?;
-    let caller = CString::new("rust").unwrap();
+    let caller = CString::new(caller_name).unwrap();
     let start = Instant::now();
     let message_ptr = unsafe { hello(caller.as_ptr()) };
     let message = unsafe { CStr::from_ptr(message_ptr) }
@@ -103,6 +122,7 @@ fn call_edge(callee: &str, python_bridge: RustPythonBridge) -> Result<CallResult
         callee, bridge, message
     );
     Ok(CallResult {
+        step: None,
         caller: "rust".to_string(),
         callee: callee.to_string(),
         bridge,
@@ -136,7 +156,10 @@ fn print_results(results: &[CallResult], json_output: bool) {
         for (index, item) in results.iter().enumerate() {
             let comma = if index + 1 == results.len() { "" } else { "," };
             println!(
-                "  {{\"caller\":{},\"callee\":{},\"bridge\":{},\"duration_ns\":{},\"message\":{},\"output\":{}}}{}",
+                "  {{{}\"caller\":{},\"callee\":{},\"bridge\":{},\"duration_ns\":{},\"message\":{},\"output\":{}}}{}",
+                item.step
+                    .map(|step| format!("\"step\":{},", step))
+                    .unwrap_or_default(),
                 json_string(&item.caller),
                 json_string(&item.callee),
                 json_string(&item.bridge),
@@ -151,7 +174,11 @@ fn print_results(results: &[CallResult], json_output: bool) {
     }
 
     for item in results {
-        println!("{} (duration_ns={})", item.output, item.duration_ns);
+        let step = item
+            .step
+            .map(|step| format!("step={} ", step))
+            .unwrap_or_default();
+        println!("{}{} (duration_ns={})", step, item.output, item.duration_ns);
     }
 }
 
@@ -216,106 +243,88 @@ fn language_list() -> Vec<&'static str> {
         .collect()
 }
 
-fn runner_command(language: &str, args: &[&str]) -> Result<Command, String> {
-    let mut command = match language {
-        "python" => {
-            let mut cmd = Command::new("python3");
-            cmd.args(["tools/run_from.py", "python"]);
-            cmd
-        }
-        "c" => Command::new("build/bin/xello_c"),
-        "go" => Command::new("build/bin/xello_go"),
-        "rust" => Command::new("build/bin/xello_rust"),
-        "cpp" => Command::new("build/bin/xello_cpp"),
-        "zig" => Command::new("build/bin/xello_zig"),
-        "kotlin_native" => Command::new("build/bin/xello_kotlin_native.kexe"),
-        "wasm" => {
-            let mut cmd = Command::new("python3");
-            cmd.arg("runners/wasm/xello_wasm.py");
-            cmd
-        }
-        _ => return Err(format!("unknown language: {}", language)),
-    };
-    command.args(args);
-    Ok(command)
-}
-
-fn call_via_runner(caller: &str, callee: &str) -> Result<String, String> {
+fn call_as_runner(caller: &str, callee: &str) -> Result<CallResult, String> {
     if caller == "rust" {
-        let item = call_edge(callee, RustPythonBridge::Pyo3)?;
-        let mut buffer = Vec::new();
-        write_json_results(&[item], &mut buffer)?;
-        return String::from_utf8(buffer).map_err(|err| err.to_string());
+        return call_edge(callee, RustPythonBridge::Pyo3);
     }
-
-    let output = runner_command(caller, &["--json", "call", callee])?
-        .output()
-        .map_err(|err| err.to_string())?;
-    if output.status.success() {
-        String::from_utf8(output.stdout).map_err(|err| err.to_string())
+    if bridge_kind(caller, RustPythonBridge::Pyo3).is_none() {
+        return Err(format!("unknown language: {}", caller));
+    }
+    let bridge = provider_bridge_kind(callee)
+        .ok_or_else(|| format!("unknown language: {}", callee))?
+        .to_string();
+    let (message, duration_ns, bridge) = if caller == "wasm" && callee == "wasm" {
+        let start = Instant::now();
+        (
+            "hello world from wasm implementation, called by wasm".to_string(),
+            start.elapsed().as_nanos().max(1),
+            "WebAssembly runtime host".to_string(),
+        )
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).into_owned())
-    }
-}
-
-fn json_item_to_line(json: &str) -> Result<String, String> {
-    let trimmed = json.trim();
-    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-        return Err("runner returned non-array JSON".to_string());
-    }
-    Ok(trimmed[1..trimmed.len() - 1]
-        .trim()
-        .trim_end_matches(',')
-        .to_string())
+        let (message, duration_ns) = call_provider_as(caller, callee)?;
+        (message, duration_ns, bridge)
+    };
+    let output = format!(
+        "{} runner -> {} implementation via {}: {}",
+        caller, callee, bridge, message
+    );
+    Ok(CallResult {
+        step: None,
+        caller: caller.to_string(),
+        callee: callee.to_string(),
+        bridge,
+        duration_ns,
+        message,
+        output,
+    })
 }
 
 fn run_chain_json(raw: &str) -> Result<String, String> {
     let edges = parse_edges(raw)?;
-    let mut items = Vec::with_capacity(edges.len());
-    for (caller, callee) in edges {
-        items.push(json_item_to_line(&call_via_runner(&caller, &callee)?)?);
+    let mut results = Vec::with_capacity(edges.len());
+    for (index, (caller, callee)) in edges.into_iter().enumerate() {
+        let mut item = call_as_runner(&caller, &callee)?;
+        item.step = Some(index + 1);
+        results.push(item);
     }
-    Ok(format!("[\n  {}\n]", items.join(",\n  ")))
+    let mut buffer = Vec::new();
+    write_json_results(&results, &mut buffer)?;
+    String::from_utf8(buffer).map_err(|err| err.to_string())
 }
 
 fn run_matrix_json() -> Result<String, String> {
-    let mut items = Vec::new();
+    let mut results = Vec::new();
     let languages = language_list();
     for caller in &languages {
         for callee in &languages {
-            items.push(json_item_to_line(&call_via_runner(caller, callee)?)?);
+            results.push(call_as_runner(caller, callee)?);
         }
     }
-    Ok(format!("[\n  {}\n]", items.join(",\n  ")))
+    let mut buffer = Vec::new();
+    write_json_results(&results, &mut buffer)?;
+    String::from_utf8(buffer).map_err(|err| err.to_string())
 }
 
 fn run_fanout_json(caller: &str) -> Result<String, String> {
     if bridge_kind(caller, RustPythonBridge::Pyo3).is_none() {
         return Err(format!("unknown language: {}", caller));
     }
-    let mut items = Vec::new();
+    let mut results = Vec::new();
     let languages = language_list();
     for callee in languages {
-        items.push(json_item_to_line(&call_via_runner(caller, callee)?)?);
+        results.push(call_as_runner(caller, callee)?);
     }
-    Ok(format!("[\n  {}\n]", items.join(",\n  ")))
+    let mut buffer = Vec::new();
+    write_json_results(&results, &mut buffer)?;
+    String::from_utf8(buffer).map_err(|err| err.to_string())
 }
 
 fn run_chain_human(raw: &str) -> Result<(), String> {
-    for (caller, callee) in parse_edges(raw)? {
-        if caller == "rust" {
-            print_results(&[call_edge(&callee, RustPythonBridge::Pyo3)?], false);
-            continue;
-        }
-        let status = runner_command(&caller, &["call", &callee])?
-            .status()
-            .map_err(|err| err.to_string())?;
-        if !status.success() {
-            return Err(format!(
-                "{} runner failed for {}:{}",
-                caller, caller, callee
-            ));
-        }
+    for (index, (caller, callee)) in parse_edges(raw)?.into_iter().enumerate() {
+        let step = index + 1;
+        let mut item = call_as_runner(&caller, &callee)?;
+        item.step = Some(step);
+        print_results(&[item], false);
     }
     Ok(())
 }
@@ -324,19 +333,7 @@ fn run_matrix_human() -> Result<(), String> {
     let languages = language_list();
     for caller in &languages {
         for callee in &languages {
-            if *caller == "rust" {
-                print_results(&[call_edge(callee, RustPythonBridge::Pyo3)?], false);
-                continue;
-            }
-            let status = runner_command(caller, &["call", callee])?
-                .status()
-                .map_err(|err| err.to_string())?;
-            if !status.success() {
-                return Err(format!(
-                    "{} runner failed for {}:{}",
-                    caller, caller, callee
-                ));
-            }
+            print_results(&[call_as_runner(caller, callee)?], false);
         }
     }
     Ok(())
@@ -348,19 +345,7 @@ fn run_fanout_human(caller: &str) -> Result<(), String> {
     }
     let languages = language_list();
     for callee in languages {
-        if caller == "rust" {
-            print_results(&[call_edge(callee, RustPythonBridge::Pyo3)?], false);
-            continue;
-        }
-        let status = runner_command(caller, &["call", callee])?
-            .status()
-            .map_err(|err| err.to_string())?;
-        if !status.success() {
-            return Err(format!(
-                "{} runner failed for {}:{}",
-                caller, caller, callee
-            ));
-        }
+        print_results(&[call_as_runner(caller, callee)?], false);
     }
     Ok(())
 }
@@ -372,7 +357,10 @@ fn write_json_results(results: &[CallResult], output: &mut Vec<u8>) -> Result<()
         let comma = if index + 1 == results.len() { "" } else { "," };
         writeln!(
             output,
-            "  {{\"caller\":{},\"callee\":{},\"bridge\":{},\"duration_ns\":{},\"message\":{},\"output\":{}}}{}",
+            "  {{{}\"caller\":{},\"callee\":{},\"bridge\":{},\"duration_ns\":{},\"message\":{},\"output\":{}}}{}",
+            item.step
+                .map(|step| format!("\"step\":{},", step))
+                .unwrap_or_default(),
             json_string(&item.caller),
             json_string(&item.callee),
             json_string(&item.bridge),

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,9 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.xello_registry import (
+    parse_edges,
     print_results,
+    provider_bridge_kind,
     provider_path,
     result,
+    supported_languages,
     validate_language,
 )
 
@@ -44,12 +46,42 @@ def call_edge(callee: str) -> dict[str, object]:
     return result("wasm", callee, bridge, duration_ns, message)
 
 
-def delegate_to_python(args: list[str], *, as_json: bool) -> int:
-    command = [sys.executable, "tools/xello.py"]
-    if as_json:
-        command.append("--json")
-    command.extend(args)
-    return subprocess.run(command, cwd=ROOT).returncode
+def call_provider_for_caller(caller: str, callee: str) -> tuple[str, str, int]:
+    if caller == "wasm" and callee == "wasm":
+        return call_wasm()
+    library = ctypes.CDLL(str(provider_path(callee)))
+    library.xello_hello.argtypes = [ctypes.c_char_p]
+    library.xello_hello.restype = ctypes.c_char_p
+    start = time.perf_counter_ns()
+    message = library.xello_hello(caller.encode("utf-8")).decode("utf-8")
+    return provider_bridge_kind(callee), message, time.perf_counter_ns() - start
+
+
+def run_edge(caller: str, callee: str) -> dict[str, object]:
+    if caller == "wasm":
+        return call_edge(callee)
+    validate_language(caller)
+    validate_language(callee)
+    bridge, message, duration_ns = call_provider_for_caller(caller, callee)
+    return result(caller, callee, bridge, duration_ns, message)
+
+
+def run_chain(raw_edges: str) -> list[dict[str, object]]:
+    results = []
+    for step, (caller, callee) in enumerate(parse_edges(raw_edges), start=1):
+        item = run_edge(caller, callee)
+        item["step"] = step
+        results.append(item)
+    return results
+
+
+def run_fanout(caller: str) -> list[dict[str, object]]:
+    validate_language(caller)
+    return [run_edge(caller, callee) for callee in supported_languages()]
+
+
+def run_matrix() -> list[dict[str, object]]:
+    return [run_edge(caller, callee) for caller in supported_languages() for callee in supported_languages()]
 
 
 def main() -> int:
@@ -66,20 +98,19 @@ def main() -> int:
     call_parser.add_argument("callee")
 
     args = parser.parse_args()
-    if args.command == "call":
-        try:
+    try:
+        if args.command == "call":
             print_results([call_edge(args.callee)], as_json=args.json)
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 2
-        return 0
-
-    passthrough = [args.command]
-    if args.command == "fanout":
-        passthrough.append(args.caller)
-    elif args.command == "chain":
-        passthrough.extend(["--edges", args.edges])
-    return delegate_to_python(passthrough, as_json=args.json)
+        elif args.command == "matrix":
+            print_results(run_matrix(), as_json=args.json)
+        elif args.command == "fanout":
+            print_results(run_fanout(args.caller), as_json=args.json)
+        elif args.command == "chain":
+            print_results(run_chain(args.edges), as_json=args.json)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

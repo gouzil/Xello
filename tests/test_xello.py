@@ -72,13 +72,13 @@ class XelloTests(unittest.TestCase):
 
         bridge_by_edge = {(item["caller"], item["callee"]): item["bridge"] for item in results}
         self.assertEqual("PyO3", bridge_by_edge[("python", "rust")])
-        self.assertEqual("Python/C API", bridge_by_edge[("c", "python")])
-        self.assertEqual("Python shared library via Python/C API", bridge_by_edge[("go", "python")])
-        self.assertEqual("PyO3 embedded Python", bridge_by_edge[("rust", "python")])
-        self.assertEqual("libloading crate", bridge_by_edge[("rust", "c")])
+        self.assertEqual("Python provider function via Python/C API", bridge_by_edge[("c", "python")])
+        self.assertEqual("Python provider function via Python/C API", bridge_by_edge[("go", "python")])
+        self.assertEqual("Python provider function via Python/C API", bridge_by_edge[("rust", "python")])
+        self.assertEqual("C provider function via C ABI", bridge_by_edge[("rust", "c")])
         if "cpp" in current_languages:
-            self.assertEqual("Python shared library via Python/C API", bridge_by_edge[("cpp", "python")])
-            self.assertEqual("direct C++ function", bridge_by_edge[("cpp", "cpp")])
+            self.assertEqual("Python provider function via Python/C API", bridge_by_edge[("cpp", "python")])
+            self.assertEqual("C++ provider function via C ABI", bridge_by_edge[("cpp", "cpp")])
             self.assertEqual("C++ shared library via C ABI", bridge_by_edge[("python", "cpp")])
         if "zig" in current_languages:
             self.assertEqual("Zig shared library via C ABI", bridge_by_edge[("python", "zig")])
@@ -95,6 +95,23 @@ class XelloTests(unittest.TestCase):
         for item in results:
             self.assertNotIn("exec", item["bridge"].lower())
             self.assertNotIn("std::process", item["bridge"])
+
+    def test_runner_matrix_paths_do_not_execute_other_runner_exes(self) -> None:
+        forbidden_patterns = {
+            "runners/python/xello_python.py": ("subprocess.run",),
+            "runners/c/xello_c.c": ("popen(", "system("),
+            "runners/cpp/xello_cpp.cpp": ("popen(", "system("),
+            "runners/go/xello_go.go": ("os/exec", "exec.Command"),
+            "runners/rust/src/main.rs": ("Command::new",),
+            "runners/zig/xello_zig.zig": ("std.process.replace",),
+            "runners/kotlin_native/xello_kotlin_runner.kt": ("system(",),
+            "runners/wasm/xello_wasm.py": ("subprocess.run",),
+        }
+        for relative_path, patterns in forbidden_patterns.items():
+            content = (ROOT / relative_path).read_text(encoding="utf-8")
+            for pattern in patterns:
+                with self.subTest(file=relative_path, pattern=pattern):
+                    self.assertNotIn(pattern, content)
 
     def test_priority_cross_compile_languages_are_reported(self) -> None:
         manifest = load_runtime_manifest()
@@ -179,8 +196,9 @@ class XelloTests(unittest.TestCase):
             ],
             [(item["caller"], item["callee"]) for item in results],
         )
+        self.assertEqual([1, 2, 3], [item["step"] for item in results])
         self.assertTrue(all("hello world" in item["output"] for item in results))
-        self.assertTrue(all(isinstance(item["duration_ns"], int) for item in results))
+        self.assertTrue(all(isinstance(item["duration_ns"], int) and item["duration_ns"] > 0 for item in results))
 
     def test_chain_can_start_from_any_runner(self) -> None:
         chain = "c:python,python:rust,rust:go,go:c"
@@ -207,6 +225,7 @@ class XelloTests(unittest.TestCase):
                     ],
                     [(item["caller"], item["callee"]) for item in results],
                 )
+                self.assertEqual([1, 2, 3, 4], [item["step"] for item in results])
 
     def test_human_chain_can_start_from_any_runner(self) -> None:
         chain = "c:python,python:rust,rust:go,go:c"
@@ -223,8 +242,10 @@ class XelloTests(unittest.TestCase):
                     ]
                 )
                 self.assertEqual(4, completed.stdout.count("duration_ns="))
+                for step in range(1, 5):
+                    self.assertIn(f"step={step}", completed.stdout)
                 self.assertIn("c runner -> python implementation", completed.stdout)
-                self.assertIn("python runner -> rust implementation via PyO3", completed.stdout)
+                self.assertIn("python runner -> rust implementation", completed.stdout)
                 self.assertIn("rust runner -> go implementation", completed.stdout)
                 self.assertIn("go runner -> c implementation", completed.stdout)
                 self.assertNotIn("chain requires at least one caller:callee edge", completed.stderr)
@@ -237,8 +258,10 @@ class XelloTests(unittest.TestCase):
         )
 
         self.assertEqual(4, completed.stdout.count("duration_ns="))
+        for step in range(1, 5):
+            self.assertIn(f"step={step}", completed.stdout)
         self.assertIn("c runner -> python implementation", completed.stdout)
-        self.assertIn("python runner -> rust implementation via PyO3", completed.stdout)
+        self.assertIn("python runner -> rust implementation", completed.stdout)
         self.assertIn("rust runner -> go implementation", completed.stdout)
         self.assertIn("go runner -> c implementation", completed.stdout)
         self.assertNotIn("chain requires at least one caller:callee edge", completed.stderr)
@@ -383,6 +406,7 @@ class XelloTests(unittest.TestCase):
         )
 
         self.assertIn("python runner -> c implementation", completed.stdout)
+        self.assertIn("step=1", completed.stdout)
         self.assertIn("duration_ns=", completed.stdout)
 
     def test_invalid_chain_edge_is_rejected(self) -> None:
@@ -422,6 +446,45 @@ class XelloTests(unittest.TestCase):
             self.assertEqual({"min", "mean", "median", "p95", "max"}, set(item[key]))
             self.assertGreater(item[key]["min"], 0)
             self.assertGreaterEqual(item[key]["max"], item[key]["min"])
+
+    def test_benchmark_chain_reports_each_step_duration(self) -> None:
+        completed = run_command(
+            [
+                sys.executable,
+                "tools/benchmark.py",
+                "--json",
+                "--iterations",
+                "1",
+                "--warmup",
+                "0",
+                "chain",
+                "--edges",
+                "python:c,c:rust",
+            ]
+        )
+        results = json.loads(completed.stdout)
+
+        self.assertEqual([1, 2], [item["step"] for item in results])
+        self.assertEqual([("python", "c"), ("c", "rust")], [(item["caller"], item["callee"]) for item in results])
+        for item in results:
+            self.assertGreater(item["call_duration_ns"]["min"], 0)
+            self.assertGreater(item["total_duration_ns"]["min"], 0)
+
+        table = run_command(
+            [
+                sys.executable,
+                "tools/benchmark.py",
+                "--iterations",
+                "1",
+                "--warmup",
+                "0",
+                "chain",
+                "--edges",
+                "python:c,c:rust",
+            ]
+        )
+        self.assertIn("step", table.stdout.splitlines()[0])
+        self.assertIn("call_mean_ns", table.stdout)
 
     def test_benchmark_expands_bridge_variants_by_default(self) -> None:
         completed = run_command(

@@ -159,24 +159,33 @@ def benchmark_fanout(caller: str, *, iterations: int, warmup: int) -> list[dict[
 
 def benchmark_chain(raw_edges: str, *, iterations: int, warmup: int) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for caller, callee in parse_edges(raw_edges):
-        results.extend(benchmark_edge(caller, callee, iterations=iterations, warmup=warmup))
+    for step, (caller, callee) in enumerate(parse_edges(raw_edges), start=1):
+        for item in benchmark_edge(caller, callee, iterations=iterations, warmup=warmup):
+            item["step"] = step
+            results.append(item)
     return results
 
 
 def print_table(results: list[dict[str, Any]]) -> None:
-    headers = [
-        "caller",
-        "callee",
-        "bridge",
-        "iters",
-        "call_mean_ns",
-        "call_p95_ns",
-        "total_mean_ns",
-        "total_p95_ns",
-    ]
-    rows = [
+    include_step = any("step" in item for item in results)
+    headers = []
+    if include_step:
+        headers.append("step")
+    headers.extend(
         [
+            "caller",
+            "callee",
+            "bridge",
+            "iters",
+            "call_mean_ns",
+            "call_p95_ns",
+            "total_mean_ns",
+            "total_p95_ns",
+        ]
+    )
+    rows = [
+        ([str(item["step"])] if include_step else [])
+        + [
             item["caller"],
             item["callee"],
             item["bridge"],
