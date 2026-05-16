@@ -19,9 +19,9 @@ The full Docker toolchain is designed to build these first-class languages:
 
 | Language | Runner | Provider route |
 | --- | --- | --- |
-| Python | `runners/python/xello_python.py` | Python direct import, `ctypes`, PyO3 extension, or C ABI providers |
+| Python | `runners/python/xello_python.py` | Python direct import, `ctypes`, PyO3/pybind11 extension modules, or C ABI providers |
 | C | `build/bin/xello_c` | Native C runner and C provider |
-| C++ | `build/bin/xello_cpp` | Native C++ runner/provider, C ABI provider, and `extern "C"` C-provider variant |
+| C++ | `build/bin/xello_cpp` | Native C++ runner/provider, pybind11 embedded Python, C ABI provider, and `extern "C"` C-provider variant |
 | Go | `build/bin/xello_go` | Native Go runner/provider over cgo/C ABI |
 | Rust | `build/bin/xello_rust` | Native Rust runner/provider, PyO3 embedded Python, and `libloading` |
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
@@ -35,7 +35,7 @@ The Docker benchmark image builds the full matrix. In the snapshot below, `build
 Xello separates runner entrypoints from provider calls:
 
 - A runner is the selected entrypoint process, for example `build/bin/xello_go` or `runners/python/xello_python.py`.
-- A provider is the callee implementation exposed as a direct import, native function, shared library symbol, PyO3 module, or runtime shim.
+- A provider is the callee implementation exposed as a direct import, native function, shared library symbol, PyO3/pybind11 module, or runtime shim.
 - Direct `call` commands exercise the selected runner's native bridge path for one caller/callee edge.
 - Aggregated `matrix`, `fanout`, and `chain` commands stay inside the selected runner process and call provider functions directly. They do not execute another language's runner executable to make an edge succeed.
 
@@ -81,9 +81,11 @@ Direct `call` commands use the named runner's native bridge path. Aggregated com
 | --- | --- |
 | `python -> rust` | PyO3 extension module |
 | `rust -> python` | PyO3 embedded Python by default, with Python/C API provider also benchmarkable |
+| `python -> cpp` | pybind11 extension module |
+| `cpp -> python` | pybind11 embedded Python by default, with Python/C API provider also benchmarkable |
 | `python -> c` | Python `ctypes` standard library |
 | `c -> python` | Python/C API |
-| `go/cpp -> python` | Python provider shared library using Python/C API |
+| `go -> python` | Python provider shared library using Python/C API |
 | `rust -> c` | Rust `libloading` crate |
 | `go -> c` | cgo over C ABI |
 | `cpp -> c` | `dlopen` over C ABI by default, with direct `extern "C"` provider variant |
@@ -101,28 +103,31 @@ docker build -t xello .
 docker run --rm xello python3 tools/benchmark.py --iterations 10 --warmup 1 matrix
 ```
 
-Container environment: Linux x86_64, Python 3.11.15, Go 1.26.3, Rust 1.95.0, Zig 0.16.0, Kotlin/Native 1.9.24, wasm-tools 1.246.2. Measured on 2026-05-12 from the Docker image after the full toolchain build. On an arm64 host, Docker may run this linux/amd64 image through emulation, so these numbers are best read as a complete, reproducible Docker matrix snapshot rather than universal performance claims.
+Container environment: Linux x86_64, Python 3.11.15, Go 1.26.3, Rust 1.95.0, Zig 0.16.0, Kotlin/Native 1.9.24, wasm-tools 1.246.2, pybind11 3.0.4. Measured on 2026-05-16 from the Docker image after the full toolchain build. On an arm64 host, Docker may run this linux/amd64 image through emulation, so these numbers are best read as a complete, reproducible Docker matrix snapshot rather than universal performance claims.
 
 | Caller | Callee | Bridge | call mean | call p95 | total mean |
 | --- | --- | --- | ---: | ---: | ---: |
-| `python` | `python` | python direct import | 15,129 ns | 19,209 ns | 119.88 ms |
-| `c` | `c` | direct C function | 352,431 ns | 380,668 ns | 10.15 ms |
-| `go` | `go` | direct Go function | 85,696 ns | 213,084 ns | 31.99 ms |
-| `rust` | `rust` | direct Rust function | 186,976 ns | 192,126 ns | 14.25 ms |
-| `cpp` | `cpp` | direct C++ function | 546,182 ns | 562,003 ns | 10.14 ms |
-| `zig` | `zig` | direct Zig function | 246,264 ns | 274,626 ns | 12.27 ms |
-| `kotlin_native` | `kotlin_native` | direct Kotlin/Native function | 116,663 ns | 138,709 ns | 17.78 ms |
-| `wasm` | `wasm` | WebAssembly runtime host | 10,946 ns | 11,625 ns | 103.09 ms |
-| `python` | `rust` | PyO3 | 941,417 ns | 1,059,589 ns | 123.52 ms |
-| `rust` | `python` | PyO3 embedded Python | 350,177 ns | 402,502 ns | 71.07 ms |
-| `rust` | `python` | Python shared library via Python/C API | 53.70 ms | 55.82 ms | 70.87 ms |
-| `cpp` | `c` | C shared library via C ABI | 418,294 ns | 476,336 ns | 13.17 ms |
-| `cpp` | `c` | C provider linked through `extern "C"` | 495,552 ns | 604,044 ns | 10.92 ms |
-| `python` | `zig` | Zig shared library via C ABI | 613,395 ns | 724,712 ns | 111.97 ms |
-| `c` | `kotlin_native` | Kotlin/Native dynamic library via C ABI | 2.25 ms | 2.37 ms | 17.55 ms |
-| `go` | `wasm` | WebAssembly C ABI shim | 353,247 ns | 368,419 ns | 33.86 ms |
-| `kotlin_native` | `cpp` | C++ shared library via C ABI | 216,185 ns | 226,418 ns | 19.83 ms |
-| `wasm` | `kotlin_native` | kotlin_native shared library via C ABI | 2.71 ms | 2.90 ms | 111.87 ms |
+| `python` | `python` | python direct import | 13,104 ns | 16,500 ns | 106.93 ms |
+| `c` | `c` | direct C function | 350,370 ns | 355,342 ns | 9.26 ms |
+| `go` | `go` | direct Go function | 70,327 ns | 78,239 ns | 29.28 ms |
+| `rust` | `rust` | direct Rust function | 183,813 ns | 187,873 ns | 13.40 ms |
+| `cpp` | `cpp` | direct C++ function | 546,674 ns | 576,358 ns | 10.57 ms |
+| `zig` | `zig` | direct Zig function | 239,574 ns | 244,292 ns | 10.80 ms |
+| `kotlin_native` | `kotlin_native` | direct Kotlin/Native function | 108,301 ns | 115,505 ns | 16.38 ms |
+| `wasm` | `wasm` | WebAssembly runtime host | 11,042 ns | 13,324 ns | 103.29 ms |
+| `python` | `rust` | PyO3 | 869,192 ns | 916,336 ns | 110.24 ms |
+| `python` | `cpp` | pybind11 extension module | 567,910 ns | 579,439 ns | 108.87 ms |
+| `rust` | `python` | PyO3 embedded Python | 333,944 ns | 361,338 ns | 66.45 ms |
+| `rust` | `python` | Python shared library via Python/C API | 50.78 ms | 54.03 ms | 67.19 ms |
+| `cpp` | `python` | pybind11 embedded Python | 273,094 ns | 298,838 ns | 69.07 ms |
+| `cpp` | `python` | Python shared library via Python/C API | 50.79 ms | 54.52 ms | 62.81 ms |
+| `cpp` | `c` | C shared library via C ABI | 381,366 ns | 386,529 ns | 12.09 ms |
+| `cpp` | `c` | C provider linked through `extern "C"` | 486,669 ns | 500,993 ns | 10.60 ms |
+| `python` | `zig` | Zig shared library via C ABI | 582,521 ns | 652,681 ns | 104.93 ms |
+| `c` | `kotlin_native` | Kotlin/Native dynamic library via C ABI | 2.19 ms | 2.41 ms | 16.63 ms |
+| `go` | `wasm` | WebAssembly C ABI shim | 369,332 ns | 434,079 ns | 30.39 ms |
+| `kotlin_native` | `cpp` | C++ shared library via C ABI | 221,449 ns | 242,918 ns | 19.99 ms |
+| `wasm` | `kotlin_native` | kotlin_native shared library via C ABI | 2.56 ms | 2.87 ms | 110.40 ms |
 
 `call mean` and `call p95` are measured inside the caller around the language bridge call. `total mean` is the benchmark harness subprocess round trip.
 

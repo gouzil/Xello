@@ -19,6 +19,7 @@ DEFAULT_WARMUP = 1
 DEFAULT_ITERATIONS = 10
 BRIDGE_VARIANTS = {
     ("cpp", "c"): ("dlopen", "extern-c"),
+    ("cpp", "python"): ("pybind", "capi"),
     ("rust", "python"): ("pyo3", "capi"),
 }
 
@@ -245,7 +246,7 @@ def main() -> int:
     call_parser.add_argument("callee")
     call_parser.add_argument(
         "--bridge",
-        choices=("pyo3", "capi", "dlopen", "extern-c"),
+        choices=("pybind", "pyo3", "capi", "dlopen", "extern-c"),
         help="optional bridge variant for callers that expose multiple implementations",
     )
 

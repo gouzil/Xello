@@ -109,6 +109,20 @@ def python_config_args(*args: str) -> list[str]:
     raise SystemExit("required Python development headers/link flags are not available")
 
 
+def pybind11_config_args(*args: str) -> list[str]:
+    completed = subprocess.run(
+        [sys.executable, "-m", "pybind11", *args],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    return completed.stdout.split()
+
+
+def python_extension_link_flags() -> list[str]:
+    return ["-undefined", "dynamic_lookup"] if platform.system() == "Darwin" else []
+
+
 def parse_requested_languages(raw: str | None) -> set[str] | None:
     if raw is None:
         return None
@@ -177,6 +191,12 @@ def main() -> None:
         )
         c_provider_object_built = True
 
+    def ensure_pybind11_available() -> None:
+        try:
+            pybind11_config_args("--includes")
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            raise SystemExit("pybind11 is required to build cpp") from exc
+
     if selected("python"):
         require("cc")
         run(
@@ -225,6 +245,7 @@ def main() -> None:
 
     if selected("cpp"):
         if shutil.which("c++"):
+            ensure_pybind11_available()
             run(
                 [
                     "c++",
@@ -247,7 +268,26 @@ def main() -> None:
                     str(c_provider_object),
                     "-o",
                     str(BIN_DIR / exe("xello_cpp")),
+                    *pybind11_config_args("--includes"),
+                    *python_config_args("--embed", "--ldflags"),
                     *c_dlopen_link_flags(),
+                ]
+            )
+            ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
+            if not ext_suffix:
+                raise SystemExit("Python EXT_SUFFIX is not available")
+            run(
+                [
+                    "c++",
+                    "-O3",
+                    "-shared",
+                    "-std=c++17",
+                    "-fPIC",
+                    str(ROOT / "bindings/cpp_python/xello_cpp_pybind.cpp"),
+                    "-o",
+                    str(LIB_DIR / f"xello_cpp_pybind{ext_suffix}"),
+                    *pybind11_config_args("--includes"),
+                    *python_extension_link_flags(),
                 ]
             )
             mark_built("cpp")

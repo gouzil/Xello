@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 from runners.python.xello_python_impl import hello as python_hello
 from tools.xello_registry import (
     bridge_kind,
+    cpp_python_module_path,
     parse_edges,
     print_results,
     provider_bridge_kind,
@@ -23,6 +24,15 @@ from tools.xello_registry import (
     supported_languages,
     validate_language,
 )
+
+
+def load_python_extension(name: str, module_path: Path):
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load Python extension at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def call_local(caller: str) -> tuple[str, str, int]:
@@ -41,15 +51,17 @@ def call_shared_provider(caller: str, callee: str) -> tuple[str, str, int]:
 
 
 def call_rust_via_pyo3(caller: str) -> tuple[str, str, int]:
-    module_path = rust_python_module_path()
-    spec = importlib.util.spec_from_file_location("xello_rust_py", module_path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"cannot load PyO3 module at {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_python_extension("xello_rust_py", rust_python_module_path())
     start = time.perf_counter_ns()
     message = module.hello(caller)
     return bridge_kind(caller, "rust"), message, time.perf_counter_ns() - start
+
+
+def call_cpp_via_pybind(caller: str) -> tuple[str, str, int]:
+    module = load_python_extension("xello_cpp_pybind", cpp_python_module_path())
+    start = time.perf_counter_ns()
+    message = module.hello(caller)
+    return bridge_kind(caller, "cpp"), message, time.perf_counter_ns() - start
 
 
 def call_edge(caller: str, callee: str) -> dict[str, object]:
@@ -60,6 +72,8 @@ def call_edge(caller: str, callee: str) -> dict[str, object]:
         bridge, message, duration_ns = call_local(caller)
     elif callee == "rust":
         bridge, message, duration_ns = call_rust_via_pyo3(caller)
+    elif callee == "cpp":
+        bridge, message, duration_ns = call_cpp_via_pybind(caller)
     else:
         bridge, message, duration_ns = call_shared_provider(caller, callee)
     return result(caller, callee, bridge, duration_ns, message)

@@ -11,6 +11,12 @@ make build
 make test
 ```
 
+C++ runner 和 Python extension 会使用 pybind11 头文件。CI 和 Docker 会自动安装；本机构建时，需要把它装进 `PYTHON` 所使用的 Python 环境：
+
+```sh
+python3 -m pip install pybind11
+```
+
 `make build` 会把实际构建成功的语言写入 `build/xello_languages.json`。完整矩阵和 benchmark 都读取这个 manifest，所以可选语言只会在工具链可用时进入结果。
 
 查看实际构建和跳过的语言：
@@ -139,6 +145,14 @@ python3 tools/benchmark.py call rust python --bridge pyo3
 python3 tools/benchmark.py call rust python --bridge capi
 ```
 
+C++ 调 Python 同时提供 pybind11 embedding 和 Python/C API provider：
+
+```sh
+python3 tools/benchmark.py call cpp python
+python3 tools/benchmark.py call cpp python --bridge pybind
+python3 tools/benchmark.py call cpp python --bridge capi
+```
+
 C++ 调 C 同时提供默认 `dlopen` 路径和 `extern "C"` 直连 C provider：
 
 ```sh
@@ -212,6 +226,7 @@ make fmt
 
 - `runners/*`：每种语言自己的入口 runner。
 - `bindings/rust_python`：Python 调用 Rust 的 PyO3 扩展模块。
+- `bindings/cpp_python`：Python 调用 C++ 的 pybind11 扩展模块。
 - `providers/*`：provider 实现，主要通过 C ABI 边界暴露。
 - `include/xello.h`：共享兜底 ABI。
 - `build/xello_languages.json`：构建后生成的实际语言 manifest。
