@@ -5,6 +5,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <pybind11/embed.h>
+
 #include <array>
 #include <fstream>
 #include <string>
@@ -12,11 +14,18 @@
 
 #include "xello.h"
 
+namespace py = pybind11;
+
 using XelloHelloFn = const char *(*)(const char *);
 
 enum class CBridge {
     Dlopen,
     ExternC,
+};
+
+enum class PythonBridge {
+    Pybind,
+    CApi,
 };
 
 static uint64_t now_ns() {
@@ -46,8 +55,12 @@ static std::string provider_path(const char *language) {
     return std::string("build/lib/libxello_") + language + shared_ext();
 }
 
-static const char *bridge_kind(const char *callee, CBridge c_bridge = CBridge::Dlopen) {
+static const char *bridge_kind(const char *callee, CBridge c_bridge = CBridge::Dlopen,
+                               PythonBridge python_bridge = PythonBridge::Pybind) {
     if (strcmp(callee, "python") == 0) {
+        if (python_bridge == PythonBridge::Pybind) {
+            return "pybind11 embedded Python";
+        }
         return "Python shared library via Python/C API";
     }
     if (strcmp(callee, "c") == 0) {
@@ -194,8 +207,31 @@ static int call_provider_as(const char *caller, const char *callee, std::string 
     return 0;
 }
 
-static int call_edge(const char *callee, bool json_output, CBridge c_bridge = CBridge::Dlopen) {
-    const char *bridge = bridge_kind(callee, c_bridge);
+static int call_python_via_pybind(std::string &message, uint64_t &duration_ns) {
+    try {
+        if (!Py_IsInitialized()) {
+            py::initialize_interpreter();
+        }
+        py::gil_scoped_acquire gil{};
+        py::module_ sys = py::module_::import("sys");
+        sys.attr("path").attr("insert")(0, ".");
+        py::object hello = py::module_::import("runners.python.xello_python_impl").attr("hello");
+        uint64_t start = now_ns();
+        message = hello("cpp").cast<std::string>();
+        duration_ns = elapsed_ns_since(start);
+        return 0;
+    } catch (const py::error_already_set &err) {
+        fprintf(stderr, "pybind11 python call failed: %s\n", err.what());
+        return 1;
+    } catch (const std::exception &err) {
+        fprintf(stderr, "pybind11 python call failed: %s\n", err.what());
+        return 1;
+    }
+}
+
+static int call_edge(const char *callee, bool json_output, CBridge c_bridge = CBridge::Dlopen,
+                     PythonBridge python_bridge = PythonBridge::Pybind) {
+    const char *bridge = bridge_kind(callee, c_bridge, python_bridge);
     if (bridge == nullptr) {
         fprintf(stderr, "unknown language: %s\n", callee);
         return 2;
@@ -208,6 +244,8 @@ static int call_edge(const char *callee, bool json_output, CBridge c_bridge = CB
         uint64_t start = now_ns();
         message = cpp_hello("cpp");
         duration_ns = elapsed_ns_since(start);
+    } else if (strcmp(callee, "python") == 0 && python_bridge == PythonBridge::Pybind) {
+        rc = call_python_via_pybind(message, duration_ns);
     } else if (strcmp(callee, "c") == 0 && c_bridge == CBridge::ExternC) {
         uint64_t start = now_ns();
         const char *raw = xello_hello("cpp");
@@ -234,6 +272,19 @@ static int call_edge(const char *callee, bool json_output, CBridge c_bridge = CB
 
 static bool is_language(const char *language) {
     return bridge_kind(language) != nullptr;
+}
+
+static int parse_python_bridge(const char *raw, PythonBridge &bridge) {
+    if (strcmp(raw, "pybind") == 0) {
+        bridge = PythonBridge::Pybind;
+        return 0;
+    }
+    if (strcmp(raw, "capi") == 0) {
+        bridge = PythonBridge::CApi;
+        return 0;
+    }
+    fprintf(stderr, "unknown cpp->python bridge: %s\n", raw);
+    return 2;
 }
 
 static int parse_c_bridge(const char *raw, CBridge &bridge) {
@@ -297,6 +348,8 @@ static int run_edge(const char *caller, const char *callee, bool json_output, bo
             uint64_t start = now_ns();
             message = cpp_hello("cpp");
             duration_ns = elapsed_ns_since(start);
+        } else if (strcmp(callee, "python") == 0) {
+            rc = call_python_via_pybind(message, duration_ns);
         } else {
             rc = call_provider(callee, message, duration_ns);
         }
@@ -437,29 +490,40 @@ int main(int argc, char **argv) {
     const char *command = argv[argi++];
     if (strcmp(command, "call") == 0) {
         CBridge c_bridge = CBridge::Dlopen;
+        PythonBridge python_bridge = PythonBridge::Pybind;
+        const char *bridge_variant = nullptr;
         if (argi < argc && strcmp(argv[argi], "--bridge") == 0) {
             argi++;
             if (argi >= argc) {
-                fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
+                fprintf(stderr, "usage: xello_cpp [--json] call [--bridge pybind|capi|dlopen|extern-c] <callee>\n");
                 return 2;
             }
-            if (parse_c_bridge(argv[argi++], c_bridge) != 0) {
-                return 2;
-            }
+            bridge_variant = argv[argi++];
         }
         if (argi >= argc) {
-            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
+            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge pybind|capi|dlopen|extern-c] <callee>\n");
             return 2;
         }
         if (argi + 1 != argc) {
-            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge dlopen|extern-c] <callee>\n");
+            fprintf(stderr, "usage: xello_cpp [--json] call [--bridge pybind|capi|dlopen|extern-c] <callee>\n");
             return 2;
         }
-        if (c_bridge == CBridge::ExternC && strcmp(argv[argi], "c") != 0) {
-            fprintf(stderr, "--bridge extern-c is only supported for cpp -> c\n");
-            return 2;
+        const char *callee = argv[argi];
+        if (bridge_variant != nullptr) {
+            if (strcmp(callee, "c") == 0) {
+                if (parse_c_bridge(bridge_variant, c_bridge) != 0) {
+                    return 2;
+                }
+            } else if (strcmp(callee, "python") == 0) {
+                if (parse_python_bridge(bridge_variant, python_bridge) != 0) {
+                    return 2;
+                }
+            } else {
+                fprintf(stderr, "--bridge is only supported for cpp -> python and cpp -> c\n");
+                return 2;
+            }
         }
-        return call_edge(argv[argi], json_output, c_bridge);
+        return call_edge(callee, json_output, c_bridge, python_bridge);
     }
     if (strcmp(command, "matrix") == 0) {
         return run_matrix(json_output);

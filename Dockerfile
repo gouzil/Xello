@@ -13,6 +13,7 @@ ARG WASM_TOOLS_VERSION=1.246.2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl default-jre-headless g++ xz-utils \
+    && python3 -m pip install --no-cache-dir pybind11 \
     && ln -sf "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
     && curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
         -o /tmp/kotlin-native.tar.gz \

@@ -11,6 +11,12 @@ make build
 make test
 ```
 
+The C++ runner and Python extension use pybind11 headers. CI and Docker install this automatically; for local host builds, install it into the Python environment used by `PYTHON`:
+
+```sh
+python3 -m pip install pybind11
+```
+
 `make build` writes the actual built language set to `build/xello_languages.json`. Full matrix and benchmark commands use that manifest, so optional languages are included only when their toolchains are available.
 
 Inspect the built and skipped language set:
@@ -139,6 +145,14 @@ python3 tools/benchmark.py call rust python --bridge pyo3
 python3 tools/benchmark.py call rust python --bridge capi
 ```
 
+C++ calling Python provides pybind11 embedding and Python/C API provider variants:
+
+```sh
+python3 tools/benchmark.py call cpp python
+python3 tools/benchmark.py call cpp python --bridge pybind
+python3 tools/benchmark.py call cpp python --bridge capi
+```
+
 C++ calling C provides the default `dlopen` path and a direct linked C provider through `extern "C"`:
 
 ```sh
@@ -212,6 +226,7 @@ Hooks for languages without matching files are skipped.
 
 - `runners/*`: language entrypoint runners.
 - `bindings/rust_python`: PyO3 Python extension for Python calling Rust.
+- `bindings/cpp_python`: pybind11 Python extension for Python calling C++.
 - `providers/*`: provider implementations, mostly exposed through C ABI boundaries.
 - `include/xello.h`: shared fallback ABI.
 - `build/xello_languages.json`: generated runtime manifest for the actual built language set.

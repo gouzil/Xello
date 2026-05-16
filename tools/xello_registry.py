@@ -20,6 +20,7 @@ BRIDGE_KIND = {
     ("python", "c"): "ctypes standard library",
     ("python", "go"): "ctypes C ABI fallback",
     ("python", "rust"): "PyO3",
+    ("python", "cpp"): "pybind11 extension module",
     ("c", "python"): "Python/C API",
     ("c", "c"): "direct C function",
     ("c", "go"): "cgo C ABI fallback",
@@ -32,6 +33,7 @@ BRIDGE_KIND = {
     ("rust", "c"): "libloading crate",
     ("rust", "go"): "libloading crate over C ABI fallback",
     ("rust", "rust"): "direct Rust function",
+    ("cpp", "python"): "pybind11 embedded Python",
 }
 
 FALLBACK_CALLEE_BRIDGE_KIND = {
@@ -121,6 +123,10 @@ def python_extension_suffix() -> str:
 
 def rust_python_module_path() -> Path:
     return LIB_DIR / f"xello_rust_py{python_extension_suffix()}"
+
+
+def cpp_python_module_path() -> Path:
+    return LIB_DIR / f"xello_cpp_pybind{python_extension_suffix()}"
 
 
 def validate_language(language: str) -> None:

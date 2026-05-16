@@ -17,4 +17,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update
       - run: sudo apt-get install -y --no-install-recommends g++
+      - run: python -m pip install pybind11
       - run: make test
