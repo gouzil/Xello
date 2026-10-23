@@ -57,12 +57,24 @@ class BuildLanguageTests(unittest.TestCase):
         self.assertEqual({"moonbit", "c"}, parse_requested_languages("moonbit,c"))
 
     def test_requested_moonbit_requires_its_toolchain(self) -> None:
-        with (
-            patch.object(sys, "argv", ["tools/build.py", "--languages", "moonbit"]),
-            patch("tools.build.shutil.which", return_value=None),
-            self.assertRaisesRegex(SystemExit, "moonbit build required but unavailable:.*moon and moonc"),
-        ):
-            build.main()
+        for backend in ("c", "native", "js", "wasm", "wasm-gc"):
+            with (
+                self.subTest(backend=backend),
+                patch.object(sys, "argv", ["tools/build.py", "--languages", "moonbit", "--moonbit-backend", backend]),
+                patch("tools.build.shutil.which", return_value=None),
+                self.assertRaisesRegex(SystemExit, "moonbit build required but unavailable:.*moon and moonc"),
+            ):
+                build.main()
+
+    def test_moonbit_backend_rejects_unsupported_targets(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "tools/build.py", "--languages", "moonbit", "--moonbit-backend", "llvm"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(2, completed.returncode)
+        self.assertIn("invalid choice: 'llvm'", completed.stderr)
 
 
 class XelloTests(unittest.TestCase):
@@ -130,6 +142,9 @@ class XelloTests(unittest.TestCase):
             "runners/wasm/xello_wasm.py": ("subprocess.run",),
             "runners/moonbit/main.mbt": ("subprocess", "system("),
             "runners/moonbit/native.c": ("popen(", "system(", "execv"),
+            "runners/moonbit/node_bridge.c": ("popen(", "system(", "execv"),
+            "runners/moonbit/vm_host.cjs": ("child_process", "spawn("),
+            "providers/moonbit/vm_provider.py": ("subprocess",),
         }
         for relative_path, patterns in forbidden_patterns.items():
             content = (ROOT / relative_path).read_text(encoding="utf-8")
@@ -166,13 +181,34 @@ class XelloTests(unittest.TestCase):
         library.xello_hello.argtypes = [ctypes.c_char_p]
         library.xello_hello.restype = ctypes.c_char_p
         self.assertEqual(b"moonbit", library.xello_language())
-        for caller in (None, b"", "月兔 🐇".encode(), b"c", b"moonbit") * 10:
+        with self.assertRaises(AttributeError):
+            _ = library.moonbit_init
+        for caller in (None, b"", "月兔 🐇".encode(), b"c", b"moonbit", b"\xffbad", ("月兔 🐇" * 500).encode()) * 10:
             with self.subTest(caller=caller):
-                expected = "unknown" if caller is None else caller.decode()
+                expected = "unknown" if caller is None else caller.decode(errors="replace")
                 self.assertEqual(
                     f"hello world from moonbit implementation, called by {expected}",
                     library.xello_hello(caller).decode(),
                 )
+
+    def test_moonbit_backend_matches_its_generated_artifact(self) -> None:
+        if "moonbit" not in languages():
+            self.skipTest("MoonBit toolchain is unavailable")
+        backend = os.environ.get("MOONBIT_BACKEND") or (
+            "native" if os.environ.get("MOONBIT_NEW_NATIVE") == "1" else "c"
+        )
+        self.assertEqual(backend, load_runtime_manifest().get("moonbit_backend"))
+        if backend in ("js", "wasm", "wasm-gc"):
+            suffix = "cjs" if backend == "js" else "wasm"
+            for kind in ("provider", "runner"):
+                self.assertTrue((ROOT / f"build/lib/xello_moonbit_{kind}_{backend}.{suffix}").is_file())
+            return
+        mode = "debug" if backend == "native" else "release"
+        output = ROOT / f"build/cache/moonbit-{backend}/native/{mode}/build/providers/moonbit"
+        generated = output / "__moonbit_link_core__/moonbit.o" if backend == "native" else output / "moonbit.c"
+        self.assertTrue(generated.is_file(), f"missing {backend} backend output: {generated}")
+        if backend == "native":
+            self.assertFalse((output / "moonbit.c").exists(), "new native backend silently fell back to C")
 
     def test_moonbit_runner_matrix_and_invalid_input(self) -> None:
         if "moonbit" not in languages():

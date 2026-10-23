@@ -18,7 +18,14 @@ jobs:
           - zig
           - kotlin_native
           - wasm
-          - moonbit
+        include:
+          - { language: moonbit, moonbit_backend: c }
+          - { language: moonbit, moonbit_backend: native }
+          - { language: moonbit, moonbit_backend: js }
+          - { language: moonbit, moonbit_backend: wasm }
+          - { language: moonbit, moonbit_backend: wasm-gc }
+    env:
+      MOONBIT_BACKEND: ${{ matrix.moonbit_backend || 'c' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -69,6 +76,13 @@ jobs:
           curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
           bash /tmp/install-moonbit.sh
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        if: contains(fromJSON('["js","wasm","wasm-gc"]'), matrix.moonbit_backend)
+        with:
+          node-version: "24"
+      - name: Install embedded V8
+        if: contains(fromJSON('["js","wasm","wasm-gc"]'), matrix.moonbit_backend)
+        run: python -m pip install -r requirements-moonbit.txt
       - run: python tools/build.py --languages "${{ matrix.language }}"
       - name: Smoke-test the MoonBit runner
         if: matrix.language == 'moonbit'

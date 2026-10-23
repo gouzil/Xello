@@ -5,6 +5,8 @@ FROM --platform=${XELLO_DOCKER_PLATFORM} rust:bookworm AS rust-toolchain
 
 FROM --platform=${XELLO_DOCKER_PLATFORM} kassany/alpine-ziglang:0.16.0 AS zig-toolchain
 
+FROM --platform=${XELLO_DOCKER_PLATFORM} node:24-bookworm-slim AS node-toolchain
+
 FROM --platform=${XELLO_DOCKER_PLATFORM} python:3.11-bookworm AS xello-build
 
 ARG ZIG_VERSION=0.16.0
@@ -36,6 +38,8 @@ COPY --from=zig-toolchain /zig/0.16.0/files /opt/zig-x86_64-linux-0.16.0
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY --from=go-toolchain /usr/local/go /usr/local/go
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/include/node /usr/local/include/node
 ENV PATH="/usr/local/cargo/bin:/usr/local/go/bin:/opt/kotlin-native-prebuilt-linux-x86_64-1.9.24/bin:${PATH}" \
     RUSTUP_HOME="/usr/local/rustup" \
     CARGO_HOME="/usr/local/cargo" \
@@ -43,6 +47,11 @@ ENV PATH="/usr/local/cargo/bin:/usr/local/go/bin:/opt/kotlin-native-prebuilt-lin
 
 WORKDIR /app
 COPY . .
+
+ARG MOONBIT_BACKEND=c
+ENV MOONBIT_BACKEND="${MOONBIT_BACKEND}"
+
+RUN python3 -m pip install --no-cache-dir -r requirements-moonbit.txt
 
 RUN python3 tools/build.py \
     && python3 - <<'PY'

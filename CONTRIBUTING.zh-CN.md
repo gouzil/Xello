@@ -67,7 +67,7 @@ const char *xello_language(void);
 7. 更新 README 的当前支持语言、技术路线和项目结构。
 8. 增加或调整 `tests/test_xello.py`。
 
-C++、Zig、Kotlin/Native、WebAssembly 和 MoonBit 均已具备 runner/provider。可选工具链缺失时记录在 `planned_languages`；MoonBit 使用 native C 后端，包配置见 `moon.mod` 和对应 `moon.pkg`。
+C++、Zig、Kotlin/Native、WebAssembly 和 MoonBit 均已具备 runner/provider。可选工具链缺失时记录在 `planned_languages`；MoonBit 通过 `MOONBIT_BACKEND=c|native|js|wasm|wasm-gc` 选择后端；VM 目标需要 Node.js 22+、Node-API 头文件和 `requirements-moonbit.txt` 中的嵌入式 V8。包配置见 `moon.mod` 和对应 `moon.pkg`。
 
 ## 常用命令
 

@@ -27,7 +27,7 @@ Xello 是一个跨语言 Hello World 调用矩阵。每种支持语言都是实�
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
 | Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Kotlin/Native runner 加 C ABI shim |
 | WebAssembly | `runners/wasm/xello_wasm.py` | WAT module、WebAssembly runtime host 和 C ABI shim |
-| MoonBit | `build/bin/xello_moonbit` | Native C 后端 runner/provider，独立运行时加 C ABI shim |
+| MoonBit | `build/bin/xello_moonbit` | 可选择 C、新原生、JavaScript、Wasm 或 Wasm GC 后端，统一通过 C ABI 接入 |
 
 Docker 镜像会构建包含 MoonBit 的全部 9 种语言。下方历史 benchmark 快照早于 MoonBit 接入，当时包含原有 8 种语言且 `planned_languages` 为空；快照没有包含 MoonBit 性能数据。
 
@@ -146,6 +146,6 @@ docker run --rm xello python3 tools/benchmark.py --iterations 10 --warmup 1 matr
 | Zig | 已实现可选 native runner/provider | 安装 `zig` 后进入矩阵 |
 | Kotlin/Native | 已实现可选 native runner/provider | 安装 `kotlinc-native` 后进入矩阵 |
 | WebAssembly | 已实现可选 WAT module、C ABI shim 和 Python runtime runner | 安装 `wasm-tools` 后进入矩阵 |
-| MoonBit | 已实现可选 native C 后端 runner/provider | 需要 `moon`、`moonc` 和 C 编译器；支持 macOS 和 Linux |
+| MoonBit | 已实现所有稳定目标的可选 runner/provider | 通过 `MOONBIT_BACKEND` 选择；VM 目标另需 Node.js 和嵌入式 V8，见[使用方式](docs/usage.zh-CN.md) |
 | Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | 可以支持，但需要明确 runtime 或平台边界 | 成为一等语言前需要先定义目标构建/运行策略 |
 | Ruby/PHP/R/Julia/Assembly | 暂不作为一等支持 | runtime、打包或架构绑定问题使它们不适合做通用矩阵目标 |

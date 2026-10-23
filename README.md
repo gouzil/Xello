@@ -27,7 +27,7 @@ The full Docker toolchain is designed to build these first-class languages:
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
 | Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Native Kotlin/Native runner plus C ABI shim |
 | WebAssembly | `runners/wasm/xello_wasm.py` | WAT module, WebAssembly runtime host, and C ABI shim |
-| MoonBit | `build/bin/xello_moonbit` | Native C backend runner/provider with an isolated runtime and C ABI shim |
+| MoonBit | `build/bin/xello_moonbit` | Selectable C, new native, JavaScript, Wasm or Wasm GC runner/provider with a C ABI boundary |
 
 The Docker image builds all nine languages, including MoonBit. The historical benchmark snapshot below predates MoonBit support and covers the original eight languages with an empty `planned_languages` set; no MoonBit timing is claimed by that snapshot.
 
@@ -146,6 +146,6 @@ When adding languages, Xello prioritizes targets that can reliably produce nativ
 | Zig | Implemented optional native runner/provider | Enters the matrix when `zig` is installed |
 | Kotlin/Native | Implemented optional native runner/provider | Enters the matrix when `kotlinc-native` is installed |
 | WebAssembly | Implemented optional WAT module, C ABI shim, and Python runtime runner | Enters the matrix when `wasm-tools` is installed |
-| MoonBit | Implemented optional native C backend runner/provider | Requires `moon`, `moonc`, and a C compiler; supported on macOS and Linux |
+| MoonBit | Implemented optional runner/provider for all stable targets | Select with `MOONBIT_BACKEND`; VM targets also require Node.js and embedded V8; see [Usage](docs/usage.md) |
 | Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | Possible with explicit runtime or platform boundaries | Needs target-specific build/runtime policy before becoming first-class |
 | Ruby/PHP/R/Julia/Assembly | Not first-class for now | Runtime, packaging, or architecture-specific constraints make them poor generic matrix targets |

@@ -17,7 +17,7 @@ The C++ runner and Python extension use pybind11 headers. CI and Docker install 
 python3 -m pip install pybind11
 ```
 
-MoonBit uses the native C backend to build both a runner and a provider on macOS and Linux. Install the official toolchain and add it to `PATH` (CI and Docker install it automatically):
+MoonBit builds the same runner and provider for C, the new native code generator, JavaScript, Wasm and Wasm GC. Install the official toolchain and add it to `PATH` (CI and Docker install it automatically):
 
 ```sh
 curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
@@ -27,9 +27,34 @@ python3 tools/build.py --languages moonbit
 ./build/bin/xello_moonbit --json call moonbit
 ```
 
-Verified with `moon 0.1.20261021` / `moonc 0.10.17`. The build compiles generated C and toolchain runtime sources into a shared library, hiding runtime symbols to isolate the MoonBit runner and provider. Default builds report a missing toolchain in `planned_languages`; explicitly requesting MoonBit fails instead. `--languages` replaces the manifest; run `make build` to restore all available languages. MoonBit JS, Wasm and LLVM backends are outside this matrix.
+Select a backend with `--moonbit-backend`, or set `MOONBIT_BACKEND` for Make and tests:
 
-The Go provider on macOS and Kotlin/Native provider on Linux remain loaded until process exit so their background runtime threads stay valid between matrix edges.
+| Value | Runner and provider artifacts | Requirements |
+| --- | --- | --- |
+| `c` (default) | C release code, native executable and isolated shared library | MoonBit and a C compiler on macOS/Linux |
+| `native` | New native debug object code, native executable and isolated shared library | MoonBit's new code generator, currently macOS arm64/Linux x86-64 |
+| `js` | Compiled CommonJS modules | Node.js 22+, Node-API headers and embedded V8 |
+| `wasm` | Compiled linear-memory Wasm modules | Same VM dependencies |
+| `wasm-gc` | Compiled Wasm GC modules | Same VM dependencies |
+
+For the VM targets, install Node.js with its headers and install the Python runtime dependency into the Python environment used for building:
+
+```sh
+python3 -m pip install -r requirements-moonbit.txt
+MOONBIT_BACKEND=js make test
+MOONBIT_BACKEND=wasm make matrix-from RUNNER=moonbit
+MOONBIT_BACKEND=wasm-gc make benchmark-from FROM=moonbit
+python3 tools/build.py --languages moonbit --moonbit-backend native
+docker build --build-arg MOONBIT_BACKEND=wasm-gc -t xello .
+```
+
+The `moonbit` language identity stays the same across backends. `build/xello_languages.json` records `moonbit_backend`; rebuild to change it. CLI arguments take precedence over `MOONBIT_BACKEND`, which takes precedence over the native toolchain's `MOONBIT_NEW_NATIVE=1` switch. `--languages` replaces the manifest; run `make build` to restore all available languages.
+
+The VM runner executes the compiled MoonBit CLI inside Node.js. Its Node-API bridge calls C ABI providers inside that process. VM callees use Python/C API embedding and `mini-racer` V8 to execute the compiled MoonBit provider; no matrix edge launches another runner. These timings include the Python/V8 bridge. The native C backend uses release optimization while the new native generator currently uses debug mode, so their timings represent different build modes.
+
+Verified with `moon 0.1.20261021` / `moonc 0.10.17`. Default builds report a missing MoonBit toolchain in `planned_languages`; explicitly requesting MoonBit fails instead. Selecting a VM backend requires its runtime dependencies. Windows and the experimental LLVM backend remain unsupported; the stable toolchain does not ship the LLVM standard library. Toolchain upgrades require revalidation of the selected backend.
+
+The Go provider on macOS, Kotlin/Native provider on Linux and Python runtime used by MoonBit VM providers remain loaded until process exit so their background runtime threads stay valid between matrix edges.
 
 `make build` writes the actual built language set to `build/xello_languages.json`. Full matrix and benchmark commands use that manifest, so optional languages are included only when their toolchains are available.
 

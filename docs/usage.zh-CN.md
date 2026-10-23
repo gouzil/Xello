@@ -17,7 +17,7 @@ C++ runner 和 Python extension 会使用 pybind11 头文件。CI 和 Docker 会
 python3 -m pip install pybind11
 ```
 
-MoonBit 使用 native C 后端，在 macOS 和 Linux 上同时构建 runner 和 provider。先安装官方工具链并加入 `PATH`（CI 和 Docker 会自动安装）：
+MoonBit 使用同一套 runner 和 provider 源码，支持 C、新原生代码生成、JavaScript、Wasm 和 Wasm GC。先安装官方工具链并加入 `PATH`（CI 和 Docker 会自动安装）：
 
 ```sh
 curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
@@ -27,9 +27,34 @@ python3 tools/build.py --languages moonbit
 ./build/bin/xello_moonbit --json call moonbit
 ```
 
-已验证 `moon 0.1.20261021` / `moonc 0.10.17`。构建会从官方工具链生成的 C 代码和运行时源码编译共享库，并隐藏运行时符号以隔离 MoonBit runner 与 provider。缺少工具链时，默认构建会在 `planned_languages` 记录原因；显式指定 MoonBit 时会报错。`--languages` 会重写 manifest，恢复完整集合请运行 `make build`。MoonBit 的 JS、Wasm 和 LLVM 后端不在当前矩阵中。
+用 `--moonbit-backend` 选择后端，或给 Make 和测试设置 `MOONBIT_BACKEND`：
 
-macOS 上的 Go provider 和 Linux 上的 Kotlin/Native provider 会驻留到进程退出，保证矩阵各条边之间的后台运行时线程仍然有效。
+| 值 | Runner 和 provider 产物 | 依赖 |
+| --- | --- | --- |
+| `c`（默认） | C release 代码、原生可执行文件和独立共享库 | macOS/Linux 上的 MoonBit 和 C 编译器 |
+| `native` | 新原生后端 debug 目标代码、原生可执行文件和独立共享库 | 工具链的新代码生成器，目前支持 macOS arm64/Linux x86-64 |
+| `js` | 编译后的 CommonJS 模块 | Node.js 22+、Node-API 头文件和嵌入式 V8 |
+| `wasm` | 编译后的线性内存 Wasm 模块 | 同上 |
+| `wasm-gc` | 编译后的 Wasm GC 模块 | 同上 |
+
+使用 VM 目标时，安装带头文件的 Node.js，并把 Python 运行时依赖安装到构建使用的 Python 环境：
+
+```sh
+python3 -m pip install -r requirements-moonbit.txt
+MOONBIT_BACKEND=js make test
+MOONBIT_BACKEND=wasm make matrix-from RUNNER=moonbit
+MOONBIT_BACKEND=wasm-gc make benchmark-from FROM=moonbit
+python3 tools/build.py --languages moonbit --moonbit-backend native
+docker build --build-arg MOONBIT_BACKEND=wasm-gc -t xello .
+```
+
+所有后端沿用 `moonbit` 语言名。`build/xello_languages.json` 的 `moonbit_backend` 记录实际后端，切换时重新构建。命令行参数优先于 `MOONBIT_BACKEND`，后者优先于工具链原生的 `MOONBIT_NEW_NATIVE=1` 开关。`--languages` 会重写 manifest，恢复完整集合请运行 `make build`。
+
+VM runner 在 Node.js 内执行编译后的 MoonBit CLI，通过 Node-API 桥接在同一进程中调用 C ABI provider。VM callee 通过 Python/C API 和 `mini-racer` 嵌入 V8，执行真实 MoonBit provider 产物；矩阵各条边都不会启动另一个 runner 进程。该路径的计时包含 Python/V8 桥接开销。C 后端使用 release 优化，新原生代码生成器目前使用 debug 模式，两者计时对应不同的构建模式。
+
+已验证 `moon 0.1.20261021` / `moonc 0.10.17`。缺少 MoonBit 工具链时，默认构建会在 `planned_languages` 记录原因，显式指定 MoonBit 时会报错。选择 VM 后端时必须具备对应的运行时依赖。Windows 和实验性 LLVM 后端暂不支持，稳定工具链没有提供 LLVM 标准库。工具链升级后需要重新验证所选后端。
+
+macOS 上的 Go provider、Linux 上的 Kotlin/Native provider，以及 MoonBit VM provider 使用的 Python 运行库会驻留到进程退出，保证矩阵各条边之间的后台运行时线程仍然有效。
 
 `make build` 会把实际构建成功的语言写入 `build/xello_languages.json`。完整矩阵和 benchmark 都读取这个 manifest，所以可选语言只会在工具链可用时进入结果。
 
