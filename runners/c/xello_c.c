@@ -60,6 +60,9 @@ static const char *bridge_kind(const char *callee) {
     if (strcmp(callee, "wasm") == 0) {
         return "WebAssembly C ABI shim";
     }
+    if (strcmp(callee, "moonbit") == 0) {
+        return "MoonBit shared library via C ABI";
+    }
     return NULL;
 }
 
@@ -87,6 +90,9 @@ static const char *provider_bridge_kind(const char *callee) {
     }
     if (strcmp(callee, "wasm") == 0) {
         return "WebAssembly C ABI shim";
+    }
+    if (strcmp(callee, "moonbit") == 0) {
+        return "MoonBit provider function via C ABI";
     }
     return NULL;
 }
@@ -233,7 +239,8 @@ static int is_language(const char *language) {
 }
 
 static void load_languages(const char **languages, size_t *count) {
-    static const char *known_languages[] = {"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"};
+    static const char *known_languages[] = {"python",        "c",    "go",     "rust", "cpp", "zig",
+                                            "kotlin_native", "wasm", "moonbit"};
     *count = 0;
 
     FILE *file = fopen("build/xello_languages.json", "r");
@@ -337,7 +344,7 @@ static int run_edge(const char *caller, const char *callee, int json_output, int
 }
 
 static int run_matrix(int json_output) {
-    const char *languages[8];
+    const char *languages[9];
     size_t language_count = 0;
     load_languages(languages, &language_count);
     int first = 1;
@@ -359,7 +366,7 @@ static int run_matrix(int json_output) {
 }
 
 static int run_fanout(const char *caller, int json_output) {
-    const char *languages[8];
+    const char *languages[9];
     size_t language_count = 0;
     load_languages(languages, &language_count);
     int first_json = 1;

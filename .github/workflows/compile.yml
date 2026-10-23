@@ -18,6 +18,7 @@ jobs:
           - zig
           - kotlin_native
           - wasm
+          - moonbit
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +31,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: matrix.language == 'rust'
       - name: Install native dependencies
-        if: contains(fromJSON('["python","c","cpp","zig","kotlin_native","wasm"]'), matrix.language)
+        if: contains(fromJSON('["python","c","cpp","zig","kotlin_native","wasm","moonbit"]'), matrix.language)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates g++
@@ -62,4 +63,13 @@ jobs:
         if: matrix.language == 'wasm'
         with:
           version: "1.246.2"
+      - name: Install MoonBit
+        if: matrix.language == 'moonbit'
+        run: |
+          curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
+          bash /tmp/install-moonbit.sh
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
       - run: python tools/build.py --languages "${{ matrix.language }}"
+      - name: Smoke-test the MoonBit runner
+        if: matrix.language == 'moonbit'
+        run: python tools/run_from.py moonbit --json call moonbit

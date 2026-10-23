@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from textwrap import dedent
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools import build
+from tools.build import parse_requested_languages
 from tools.xello_registry import load_runtime_manifest, supported_languages
 
 
@@ -19,7 +25,7 @@ def languages() -> tuple[str, ...]:
 
 
 def optional_languages() -> tuple[str, ...]:
-    return tuple(language for language in ("zig", "kotlin_native", "wasm") if language in languages())
+    return tuple(language for language in ("zig", "kotlin_native", "wasm", "moonbit") if language in languages())
 
 
 def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -35,14 +41,28 @@ def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
 def run_make(target: str, **variables: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(variables)
+    # setUpClass already built the artifacts; these tests exercise Make command routing.
     return subprocess.run(
-        ["make", target],
+        ["make", "--assume-old=build", target],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
         env=env,
     )
+
+
+class BuildLanguageTests(unittest.TestCase):
+    def test_moonbit_can_be_requested_explicitly(self) -> None:
+        self.assertEqual({"moonbit", "c"}, parse_requested_languages("moonbit,c"))
+
+    def test_requested_moonbit_requires_its_toolchain(self) -> None:
+        with (
+            patch.object(sys, "argv", ["tools/build.py", "--languages", "moonbit"]),
+            patch("tools.build.shutil.which", return_value=None),
+            self.assertRaisesRegex(SystemExit, "moonbit build required but unavailable:.*moon and moonc"),
+        ):
+            build.main()
 
 
 class XelloTests(unittest.TestCase):
@@ -82,13 +102,15 @@ class XelloTests(unittest.TestCase):
             self.assertEqual("pybind11 extension module", bridge_by_edge[("python", "cpp")])
         if "zig" in current_languages:
             self.assertEqual("Zig shared library via C ABI", bridge_by_edge[("python", "zig")])
-            self.assertEqual("direct Zig function", bridge_by_edge[("zig", "zig")])
+            self.assertEqual("Zig provider function via C ABI", bridge_by_edge[("zig", "zig")])
         if "kotlin_native" in current_languages:
             self.assertEqual(
                 "Kotlin/Native dynamic library via C ABI",
                 bridge_by_edge[("python", "kotlin_native")],
             )
-            self.assertEqual("direct Kotlin/Native function", bridge_by_edge[("kotlin_native", "kotlin_native")])
+            self.assertEqual(
+                "Kotlin/Native provider function via C ABI", bridge_by_edge[("kotlin_native", "kotlin_native")]
+            )
         if "wasm" in current_languages:
             self.assertEqual("WebAssembly C ABI shim", bridge_by_edge[("python", "wasm")])
             self.assertEqual("WebAssembly runtime host", bridge_by_edge[("wasm", "wasm")])
@@ -106,6 +128,8 @@ class XelloTests(unittest.TestCase):
             "runners/zig/xello_zig.zig": ("std.process.replace",),
             "runners/kotlin_native/xello_kotlin_runner.kt": ("system(",),
             "runners/wasm/xello_wasm.py": ("subprocess.run",),
+            "runners/moonbit/main.mbt": ("subprocess", "system("),
+            "runners/moonbit/native.c": ("popen(", "system(", "execv"),
         }
         for relative_path, patterns in forbidden_patterns.items():
             content = (ROOT / relative_path).read_text(encoding="utf-8")
@@ -119,7 +143,7 @@ class XelloTests(unittest.TestCase):
         planned_languages = manifest["planned_languages"]
 
         self.assertIn("cpp", current_languages)
-        for language in ("zig", "kotlin_native", "wasm"):
+        for language in ("zig", "kotlin_native", "wasm", "moonbit"):
             self.assertTrue(
                 language in current_languages or language in planned_languages,
                 f"{language} should either be built or reported as planned/skipped",
@@ -130,6 +154,136 @@ class XelloTests(unittest.TestCase):
         self.assertTrue((ROOT / "runners/zig/xello_zig.zig").exists())
         self.assertTrue((ROOT / "runners/kotlin_native/xello_kotlin_runner.kt").exists())
         self.assertTrue((ROOT / "runners/wasm/xello_wasm.py").exists())
+        self.assertTrue((ROOT / "runners/moonbit/main.mbt").exists())
+
+    def test_moonbit_provider_handles_utf8_and_repeated_calls(self) -> None:
+        if "moonbit" not in languages():
+            self.skipTest("MoonBit toolchain is unavailable")
+        from tools.xello_registry import provider_path
+
+        library = ctypes.CDLL(str(provider_path("moonbit")))
+        library.xello_language.restype = ctypes.c_char_p
+        library.xello_hello.argtypes = [ctypes.c_char_p]
+        library.xello_hello.restype = ctypes.c_char_p
+        self.assertEqual(b"moonbit", library.xello_language())
+        for caller in (None, b"", "月兔 🐇".encode(), b"c", b"moonbit") * 10:
+            with self.subTest(caller=caller):
+                expected = "unknown" if caller is None else caller.decode()
+                self.assertEqual(
+                    f"hello world from moonbit implementation, called by {expected}",
+                    library.xello_hello(caller).decode(),
+                )
+
+    def test_moonbit_runner_matrix_and_invalid_input(self) -> None:
+        if "moonbit" not in languages():
+            self.skipTest("MoonBit toolchain is unavailable")
+        command = [sys.executable, "tools/run_from.py", "moonbit", "--json"]
+        results = json.loads(run_command([*command, "matrix"]).stdout)
+        expected = {(caller, callee) for caller in languages() for callee in languages()}
+        self.assertEqual(expected, {(item["caller"], item["callee"]) for item in results})
+        self.assertEqual(len(expected), len(results))
+        for item in results:
+            self.assertEqual(
+                f"hello world from {item['callee']} implementation, called by {item['caller']}",
+                item["message"],
+            )
+            self.assertIsInstance(item["duration_ns"], int)
+            self.assertGreater(item["duration_ns"], 0)
+        own_edge = next(item for item in results if item["caller"] == item["callee"] == "moonbit")
+        self.assertEqual("direct MoonBit function", own_edge["bridge"])
+        for args, error in (
+            ([], "usage:"),
+            (["call"], "usage:"),
+            (["call", "java"], "unknown language: java"),
+            (["fanout", "java"], "unknown language: java"),
+            (["chain", "--edges", ""], "chain requires at least one"),
+            (["chain", "--edges", "c:moonbit:python"], "invalid chain edge"),
+            (["chain", "--edges", "c:java"], "unknown language: java"),
+        ):
+            with self.subTest(args=args):
+                completed = subprocess.run([*command, *args], cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(2, completed.returncode)
+                self.assertIn(error, completed.stderr)
+                self.assertEqual("", completed.stdout)
+
+        chain = json.loads(run_command([*command, "chain", "--edges", " ,  MOONBIT : C , c : MOONBIT , "]).stdout)
+        self.assertEqual([("moonbit", "c"), ("c", "moonbit")], [(item["caller"], item["callee"]) for item in chain])
+        self.assertEqual([1, 2], [item["step"] for item in chain])
+
+    def test_moonbit_runner_respects_manifest_and_reports_missing_providers(self) -> None:
+        if "moonbit" not in languages():
+            self.skipTest("MoonBit toolchain is unavailable")
+        runner = ROOT / "build/bin/xello_moonbit"
+        with tempfile.TemporaryDirectory() as directory:
+            build_dir = Path(directory) / "build"
+            build_dir.mkdir()
+            manifest = build_dir / "xello_languages.json"
+            manifest.write_text(
+                json.dumps({"languages": ["c"], "planned_languages": {"moonbit": "unavailable"}}), encoding="utf-8"
+            )
+            completed = subprocess.run(
+                [str(runner), "--json", "call", "moonbit"], cwd=directory, capture_output=True, text=True
+            )
+            self.assertEqual(2, completed.returncode)
+            self.assertIn("unknown language: moonbit", completed.stderr)
+            self.assertEqual("", completed.stdout)
+
+            manifest.write_text("{", encoding="utf-8")
+            completed = subprocess.run([str(runner), "--json", "matrix"], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(2, completed.returncode)
+            self.assertEqual("", completed.stdout)
+
+            manifest.write_text(json.dumps({"languages": ["moonbit", "c"]}), encoding="utf-8")
+            completed = subprocess.run(
+                [str(runner), "--json", "call", "c"], cwd=directory, capture_output=True, text=True
+            )
+            self.assertEqual(1, completed.returncode)
+            self.assertIn("libxello_c", completed.stderr)
+            self.assertEqual("", completed.stdout)
+
+    def test_go_runtime_stays_loaded_after_provider_close(self) -> None:
+        if sys.platform not in ("linux", "darwin") or "go" not in languages():
+            self.skipTest("Linux or macOS with Go is required")
+        script = dedent("""
+            import _ctypes
+            import ctypes
+            import os
+            import sys
+
+            path = "build/lib/libxello_go" + (".dylib" if sys.platform == "darwin" else ".so")
+            library = ctypes.CDLL(path)
+            library.xello_hello.argtypes = [ctypes.c_char_p]
+            library.xello_hello.restype = ctypes.c_char_p
+            assert library.xello_hello(b"moonbit") == (
+                b"hello world from go implementation, called by moonbit"
+            )
+            _ctypes.dlclose(library._handle)
+            try:
+                ctypes.CDLL(path, mode=os.RTLD_NOLOAD)
+            except OSError as exc:
+                raise AssertionError("Go provider was unloaded while its runtime can still be active") from exc
+        """)
+        run_command([sys.executable, "-c", script])
+
+    def test_linux_kotlin_runtime_stays_loaded_after_a_moonbit_call(self) -> None:
+        if sys.platform != "linux" or not {"kotlin_native", "moonbit"}.issubset(languages()):
+            self.skipTest("Linux with Kotlin/Native and MoonBit is required")
+        script = dedent("""            import _ctypes
+            import ctypes
+            from pathlib import Path
+
+            library = ctypes.CDLL("build/lib/libxello_kotlin_native.so")
+            library.xello_hello.argtypes = [ctypes.c_char_p]
+            library.xello_hello.restype = ctypes.c_char_p
+            assert library.xello_hello(b"moonbit") == (
+                b"hello world from kotlin_native implementation, called by moonbit"
+            )
+            _ctypes.dlclose(library._handle)
+            assert "libxello_kotlin_native.so" in Path("/proc/self/maps").read_text(), (
+                "Kotlin/Native provider was unloaded while its runtime can still be active"
+            )
+        """)
+        run_command([sys.executable, "-c", script])
 
     def test_makefile_and_usage_docs_cover_supported_language_examples(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -283,6 +437,10 @@ class XelloTests(unittest.TestCase):
                     results = json.loads(completed.stdout)
                     self.assertEqual([(runner, callee)], [(item["caller"], item["callee"]) for item in results])
                     self.assertIn("bridge", results[0])
+                    self.assertEqual(
+                        f"hello world from {callee} implementation, called by {runner}", results[0]["message"]
+                    )
+                    self.assertIsInstance(results[0]["duration_ns"], int)
                     self.assertGreater(results[0]["duration_ns"], 0)
 
     def test_rust_python_bridge_variants_are_available(self) -> None:
@@ -414,6 +572,11 @@ class XelloTests(unittest.TestCase):
                         [(caller, callee) for callee in languages()],
                         [(item["caller"], item["callee"]) for item in results],
                     )
+                    for item in results:
+                        self.assertEqual(
+                            f"{caller} runner -> {item['callee']} implementation via {item['bridge']}: {item['message']}",
+                            item["output"],
+                        )
 
     def test_human_fanout_and_make_fanout(self) -> None:
         completed = run_make("fanout", FROM="c")

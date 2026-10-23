@@ -17,7 +17,7 @@ LIB_DIR = BUILD / "lib"
 BIN_DIR = BUILD / "bin"
 CACHE_DIR = BUILD / "cache"
 MANIFEST = BUILD / "xello_languages.json"
-LANGUAGE_ORDER = ("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm")
+LANGUAGE_ORDER = ("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit")
 
 
 def run(args: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -304,6 +304,7 @@ def main() -> None:
                 "-o",
                 str(LIB_DIR / f"libxello_go{ext}"),
                 str(ROOT / "providers/go/xello_go.go"),
+                *([str(ROOT / "providers/go/runtime_darwin.go")] if platform.system() == "Darwin" else []),
             ],
             env=go_env,
         )
@@ -430,6 +431,8 @@ def main() -> None:
                         if platform.system() == "Darwin"
                         else ["-Wl,-rpath,$ORIGIN/kotlin_native"]
                     ),
+                    # Keep Kotlin runtime state alive across provider load/unload cycles.
+                    *(["-Wl,-z,nodelete"] if platform.system() == "Linux" else []),
                     "-o",
                     str(LIB_DIR / f"libxello_kotlin_native{ext}"),
                 ]
@@ -486,6 +489,57 @@ def main() -> None:
                 mark_unavailable("wasm", "skipped: WebAssembly C ABI shim build failed")
         else:
             mark_unavailable("wasm", "skipped: wasm-tools not found")
+
+    if selected("moonbit"):
+        moon = shutil.which("moon")
+        if moon and shutil.which("moonc"):
+            require("cc")
+            moon_home = Path(os.environ.get("MOON_HOME") or Path(moon).resolve().parent.parent)
+            moon_target = CACHE_DIR / "moonbit"
+            run(
+                [
+                    moon,
+                    "build",
+                    "--target",
+                    "native",
+                    "--release",
+                    "--deny-warn",
+                    "--target-dir",
+                    str(moon_target),
+                    "providers/moonbit",
+                    "runners/moonbit",
+                ],
+                env={"MOONBIT_NEW_NATIVE": "0"},
+            )
+            native_build = moon_target / "native/release/build"
+            runtime = moon_home / "lib/runtime"
+            # Compile runtime sources as PIC and hide them to isolate each loaded provider.
+            run(
+                [
+                    "cc",
+                    "-shared",
+                    "-fPIC",
+                    "-fvisibility=hidden",
+                    "-O2",
+                    "-fwrapv",
+                    "-fno-strict-aliasing",
+                    "-I",
+                    include,
+                    "-I",
+                    str(moon_home / "include"),
+                    str(ROOT / "providers/moonbit/xello_moonbit.c"),
+                    str(native_build / "providers/moonbit/moonbit.c"),
+                    *(str(runtime / name) for name in ("runtime.c", "utf.c", "env.c", "backtrace.c")),
+                    "-lm",
+                    *c_dlopen_link_flags(),
+                    "-o",
+                    str(LIB_DIR / f"libxello_moonbit{ext}"),
+                ]
+            )
+            shutil.copy2(native_build / "runners/moonbit/moonbit.exe", BIN_DIR / exe("xello_moonbit"))
+            mark_built("moonbit")
+        else:
+            mark_unavailable("moonbit", "skipped: moon and moonc are required (install the MoonBit toolchain)")
 
     MANIFEST.write_text(
         json.dumps(

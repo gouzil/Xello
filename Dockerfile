@@ -10,10 +10,17 @@ FROM --platform=${XELLO_DOCKER_PLATFORM} python:3.11-bookworm AS xello-build
 ARG ZIG_VERSION=0.16.0
 ARG KOTLIN_NATIVE_VERSION=1.9.24
 ARG WASM_TOOLS_VERSION=1.246.2
+ARG MOONBIT_VERSION=latest
+
+ENV MOON_HOME="/opt/moon" \
+    PATH="/opt/moon/bin:${PATH}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl default-jre-headless g++ xz-utils \
     && python3 -m pip install --no-cache-dir pybind11 \
+    && curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
+        -o /tmp/install-moonbit.sh https://cli.moonbitlang.com/install/unix.sh \
+    && bash /tmp/install-moonbit.sh "${MOONBIT_VERSION}" \
     && ln -sf "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
     && curl --retry 5 --retry-delay 10 --retry-connrefused --retry-all-errors -fsSL \
         -o /tmp/kotlin-native.tar.gz \
@@ -23,7 +30,7 @@ RUN apt-get update \
         -o /tmp/wasm-tools.tar.gz \
         "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux.tar.gz" \
     && tar -xzf /tmp/wasm-tools.tar.gz -C /usr/local/bin --strip-components=1 "wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux/wasm-tools" \
-    && rm -rf /var/lib/apt/lists/* /tmp/kotlin-native.tar.gz /tmp/wasm-tools.tar.gz
+    && rm -rf /var/lib/apt/lists/* /tmp/kotlin-native.tar.gz /tmp/wasm-tools.tar.gz /tmp/install-moonbit.sh
 
 COPY --from=zig-toolchain /zig/0.16.0/files /opt/zig-x86_64-linux-0.16.0
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
@@ -43,7 +50,7 @@ import json
 from pathlib import Path
 
 manifest = json.loads(Path("build/xello_languages.json").read_text())
-expected = {"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"}
+expected = {"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit"}
 actual = set(manifest["languages"])
 missing = sorted(expected - actual)
 if missing:
@@ -51,6 +58,7 @@ if missing:
 PY
 
 FROM xello-build AS xello-smoke
-RUN python3 tools/xello.py --json chain --edges "python:zig,zig:kotlin_native,kotlin_native:wasm,wasm:c" >/tmp/xello-smoke.json
+RUN python3 tools/xello.py --json chain --edges "python:zig,zig:kotlin_native,kotlin_native:wasm,wasm:moonbit,moonbit:c" >/tmp/xello-smoke.json \
+    && python3 tools/run_from.py moonbit --json matrix >/tmp/xello-moonbit-matrix.json
 
 CMD ["make", "matrix"]

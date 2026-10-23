@@ -1,4 +1,4 @@
-.PHONY: all build matrix matrix-from fanout fanout-from chain chain-from benchmark benchmark-from docker-benchmark docker-benchmark-from fmt prek python c cpp go rust zig kotlin_native wasm test clean
+.PHONY: all build matrix matrix-from fanout fanout-from chain chain-from benchmark benchmark-from docker-benchmark docker-benchmark-from fmt prek python c cpp go rust zig kotlin_native wasm moonbit test clean
 
 PYTHON ?= python3
 RUNNER ?= python
@@ -72,6 +72,9 @@ kotlin_native: build
 
 wasm: build
 	$(PYTHON) runners/wasm/xello_wasm.py chain --edges "$(CHAIN)"
+
+moonbit: build
+	./build/bin/xello_moonbit chain --edges "$(CHAIN)"
 
 test:
 	$(PYTHON) -m unittest discover -s tests

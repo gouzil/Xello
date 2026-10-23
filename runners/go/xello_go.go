@@ -24,7 +24,7 @@ import (
 	"unsafe"
 )
 
-var knownLanguageList = []string{"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"}
+var knownLanguageList = []string{"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit"}
 var languages = map[string]bool{
 	"python":        true,
 	"c":             true,
@@ -34,6 +34,7 @@ var languages = map[string]bool{
 	"zig":           true,
 	"kotlin_native": true,
 	"wasm":          true,
+	"moonbit":       true,
 }
 
 type runtimeManifest struct {
@@ -90,6 +91,8 @@ func bridgeKind(callee string) string {
 		return "Kotlin/Native dynamic library via C ABI"
 	case "wasm":
 		return "WebAssembly C ABI shim"
+	case "moonbit":
+		return "MoonBit shared library via C ABI"
 	default:
 		return ""
 	}
@@ -113,6 +116,8 @@ func providerBridgeKind(callee string) string {
 		return "Kotlin/Native provider function via C ABI"
 	case "wasm":
 		return "WebAssembly C ABI shim"
+	case "moonbit":
+		return "MoonBit provider function via C ABI"
 	default:
 		return ""
 	}

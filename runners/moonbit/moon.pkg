@@ -1,0 +1,13 @@
+import {
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/encoding/utf8",
+  "xello/native/providers/moonbit" @provider,
+}
+
+pkgtype(kind: "executable")
+
+options(
+  "native-stub": [ "native.c" ],
+  link: { "native": { "cc-link-flags": "-ldl" } },
+)

@@ -17,6 +17,20 @@ C++ runner 和 Python extension 会使用 pybind11 头文件。CI 和 Docker 会
 python3 -m pip install pybind11
 ```
 
+MoonBit 使用 native C 后端，在 macOS 和 Linux 上同时构建 runner 和 provider。先安装官方工具链并加入 `PATH`（CI 和 Docker 会自动安装）：
+
+```sh
+curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
+bash /tmp/install-moonbit.sh
+export PATH="$HOME/.moon/bin:$PATH"
+python3 tools/build.py --languages moonbit
+./build/bin/xello_moonbit --json call moonbit
+```
+
+已验证 `moon 0.1.20261021` / `moonc 0.10.17`。构建会从官方工具链生成的 C 代码和运行时源码编译共享库，并隐藏运行时符号以隔离 MoonBit runner 与 provider。缺少工具链时，默认构建会在 `planned_languages` 记录原因；显式指定 MoonBit 时会报错。`--languages` 会重写 manifest，恢复完整集合请运行 `make build`。MoonBit 的 JS、Wasm 和 LLVM 后端不在当前矩阵中。
+
+macOS 上的 Go provider 和 Linux 上的 Kotlin/Native provider 会驻留到进程退出，保证矩阵各条边之间的后台运行时线程仍然有效。
+
 `make build` 会把实际构建成功的语言写入 `build/xello_languages.json`。完整矩阵和 benchmark 都读取这个 manifest，所以可选语言只会在工具链可用时进入结果。
 
 查看实际构建和跳过的语言：
@@ -46,9 +60,12 @@ make matrix-from RUNNER=rust
 make matrix-from RUNNER=zig
 make matrix-from RUNNER=kotlin_native
 make matrix-from RUNNER=wasm
+make matrix-from RUNNER=moonbit
 make fanout-from RUNNER=cpp FROM=rust
 make fanout-from RUNNER=rust FROM=go
 make fanout-from RUNNER=zig FROM=kotlin_native
+make fanout-from RUNNER=moonbit FROM=moonbit
+make chain-from RUNNER=moonbit CHAIN=moonbit:python,python:moonbit,moonbit:c,c:moonbit
 make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
 ```
 
@@ -73,6 +90,9 @@ python3 runners/python/xello_python.py fanout c
 ./build/bin/xello_zig call kotlin_native
 ./build/bin/xello_kotlin_native.kexe call wasm
 python3 runners/wasm/xello_wasm.py fanout zig
+./build/bin/xello_moonbit call python
+./build/bin/xello_moonbit call moonbit
+./build/bin/xello_c call moonbit
 ```
 
 脚本处理时使用 JSON 输出：
@@ -107,6 +127,7 @@ python3 tools/benchmark.py fanout rust
 python3 tools/benchmark.py fanout zig
 python3 tools/benchmark.py fanout kotlin_native
 python3 tools/benchmark.py fanout wasm
+python3 tools/benchmark.py fanout moonbit
 ```
 
 等价 Make 入口：
@@ -120,6 +141,7 @@ make benchmark-from FROM=rust
 make benchmark-from FROM=zig
 make benchmark-from FROM=kotlin_native
 make benchmark-from FROM=wasm
+make benchmark-from FROM=moonbit
 ```
 
 Benchmark 输出两组耗时：
@@ -206,6 +228,7 @@ make fmt
 | Go | gofmt |
 | Rust | rustfmt |
 | Zig | zig fmt |
+| MoonBit | moon fmt |
 | JavaScript、Node.js、TypeScript | Prettier |
 | Java | google-java-format |
 | Kotlin/JVM、Kotlin/Native | ktfmt |
@@ -228,6 +251,7 @@ make fmt
 - `bindings/rust_python`：Python 调用 Rust 的 PyO3 扩展模块。
 - `bindings/cpp_python`：Python 调用 C++ 的 pybind11 扩展模块。
 - `providers/*`：provider 实现，主要通过 C ABI 边界暴露。
+- `moon.mod`、`providers/moonbit/moon.pkg`、`runners/moonbit/moon.pkg`：MoonBit 模块和包配置。
 - `include/xello.h`：共享兜底 ABI。
 - `build/xello_languages.json`：构建后生成的实际语言 manifest。
 - `tools/build.py`：构建共享库、runner、binding 和 manifest。

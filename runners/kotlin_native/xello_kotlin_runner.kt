@@ -21,7 +21,7 @@ import platform.posix.fprintf
 import platform.posix.stderr
 import kotlin.system.exitProcess
 
-private val languages = listOf("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm")
+private val languages = listOf("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit")
 
 private data class CallResult(
     val caller: String,
@@ -53,6 +53,7 @@ private fun bridgeKind(callee: String): String? = when (callee) {
     "zig" -> "Zig shared library via C ABI"
     "kotlin_native" -> "direct Kotlin/Native function"
     "wasm" -> "WebAssembly C ABI shim"
+    "moonbit" -> "MoonBit shared library via C ABI"
     else -> null
 }
 
@@ -65,6 +66,7 @@ private fun providerBridgeKind(callee: String): String? = when (callee) {
     "zig" -> "Zig provider function via C ABI"
     "kotlin_native" -> "Kotlin/Native provider function via C ABI"
     "wasm" -> "WebAssembly C ABI shim"
+    "moonbit" -> "MoonBit provider function via C ABI"
     else -> null
 }
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const languages = [_][]const u8{ "python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm" };
+const languages = [_][]const u8{ "python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit" };
 const HelloFn = *const fn ([*c]const u8) callconv(.c) [*c]const u8;
 
 const CallResult = struct {
@@ -50,6 +50,7 @@ fn bridgeKind(callee: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, callee, "zig")) return "direct Zig function";
     if (std.mem.eql(u8, callee, "kotlin_native")) return "Kotlin/Native dynamic library via C ABI";
     if (std.mem.eql(u8, callee, "wasm")) return "WebAssembly C ABI shim";
+    if (std.mem.eql(u8, callee, "moonbit")) return "MoonBit shared library via C ABI";
     return null;
 }
 
@@ -62,6 +63,7 @@ fn providerBridgeKind(callee: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, callee, "zig")) return "Zig provider function via C ABI";
     if (std.mem.eql(u8, callee, "kotlin_native")) return "Kotlin/Native provider function via C ABI";
     if (std.mem.eql(u8, callee, "wasm")) return "WebAssembly C ABI shim";
+    if (std.mem.eql(u8, callee, "moonbit")) return "MoonBit provider function via C ABI";
     return null;
 }
 
@@ -159,7 +161,7 @@ fn printResults(io: std.Io, results: []const CallResult, json_output: bool) !voi
             try writeStdout(io, prefix);
             try printJsonString(io, item.message);
             try writeStdout(io, ",\"output\":");
-            const output = try std.fmt.bufPrint(&buffer, "zig runner -> {s} implementation via {s}: {s}", .{ item.callee, item.bridge, item.message });
+            const output = try std.fmt.bufPrint(&buffer, "{s} runner -> {s} implementation via {s}: {s}", .{ item.caller, item.callee, item.bridge, item.message });
             try printJsonString(io, output);
             const suffix = try std.fmt.bufPrint(&buffer, "}}{s}\n", .{comma});
             try writeStdout(io, suffix);

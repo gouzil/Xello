@@ -27,8 +27,9 @@ Xello 是一个跨语言 Hello World 调用矩阵。每种支持语言都是实�
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
 | Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Kotlin/Native runner 加 C ABI shim |
 | WebAssembly | `runners/wasm/xello_wasm.py` | WAT module、WebAssembly runtime host 和 C ABI shim |
+| MoonBit | `build/bin/xello_moonbit` | Native C 后端 runner/provider，独立运行时加 C ABI shim |
 
-Docker benchmark 镜像会构建完整矩阵。下面快照里的 `build/xello_languages.json` 包含全部 8 种语言，`planned_languages` 为空，所以即使宿主机没有 Zig、Kotlin/Native、WebAssembly 工具链，benchmark 也能覆盖这些可选路径。
+Docker 镜像会构建包含 MoonBit 的全部 9 种语言。下方历史 benchmark 快照早于 MoonBit 接入，当时包含原有 8 种语言且 `planned_languages` 为空；快照没有包含 MoonBit 性能数据。
 
 ## 执行模型
 
@@ -93,6 +94,8 @@ Xello 优先使用成熟语言桥接库。没有合适成熟桥接时，才使�
 | `python/c/go/rust/cpp -> zig` | Zig provider 暴露 C ABI |
 | `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider 通过 C ABI shim 暴露 |
 | `python/c/go/rust/cpp -> wasm` | WebAssembly provider 通过 C ABI shim 暴露 |
+| `any -> moonbit` | MoonBit native provider 通过 C ABI 暴露 |
+| `moonbit -> any` | Native FFI over C ABI；自调用直接执行 MoonBit 函数 |
 
 ## Benchmark 快照
 
@@ -143,5 +146,6 @@ docker run --rm xello python3 tools/benchmark.py --iterations 10 --warmup 1 matr
 | Zig | 已实现可选 native runner/provider | 安装 `zig` 后进入矩阵 |
 | Kotlin/Native | 已实现可选 native runner/provider | 安装 `kotlinc-native` 后进入矩阵 |
 | WebAssembly | 已实现可选 WAT module、C ABI shim 和 Python runtime runner | 安装 `wasm-tools` 后进入矩阵 |
+| MoonBit | 已实现可选 native C 后端 runner/provider | 需要 `moon`、`moonc` 和 C 编译器；支持 macOS 和 Linux |
 | Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | 可以支持，但需要明确 runtime 或平台边界 | 成为一等语言前需要先定义目标构建/运行策略 |
 | Ruby/PHP/R/Julia/Assembly | 暂不作为一等支持 | runtime、打包或架构绑定问题使它们不适合做通用矩阵目标 |

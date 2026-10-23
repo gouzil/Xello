@@ -87,6 +87,9 @@ static const char *bridge_kind(const char *callee, CBridge c_bridge = CBridge::D
     if (strcmp(callee, "wasm") == 0) {
         return "WebAssembly C ABI shim";
     }
+    if (strcmp(callee, "moonbit") == 0) {
+        return "MoonBit shared library via C ABI";
+    }
     return nullptr;
 }
 
@@ -114,6 +117,9 @@ static const char *provider_bridge_kind(const char *callee) {
     }
     if (strcmp(callee, "wasm") == 0) {
         return "WebAssembly C ABI shim";
+    }
+    if (strcmp(callee, "moonbit") == 0) {
+        return "MoonBit provider function via C ABI";
     }
     return nullptr;
 }
@@ -301,7 +307,8 @@ static int parse_c_bridge(const char *raw, CBridge &bridge) {
 }
 
 static std::vector<const char *> load_languages() {
-    std::array<const char *, 8> known_languages = {"python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm"};
+    std::array<const char *, 9> known_languages = {"python",        "c",    "go",     "rust", "cpp", "zig",
+                                                   "kotlin_native", "wasm", "moonbit"};
     std::ifstream manifest("build/xello_languages.json");
     if (!manifest) {
         return {"python", "c", "go", "rust", "cpp"};

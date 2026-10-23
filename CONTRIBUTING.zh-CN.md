@@ -36,7 +36,7 @@ Xello 是一个跨语言 Hello World 调用矩阵。贡献代码时最重要的�
 - `message` 使用 `hello world from <callee> implementation, called by <caller>`。
 - `output` 使用 `<caller> runner -> <callee> implementation via <bridge>: <message>`。
 
-如果一个 runner 不能直接执行某条边，可以委托到该边 caller 对应的 runner。当前 `chain` 的语义是：每条 `caller:callee` 都由该 `caller` 的 runner 执行。
+聚合的 `chain`、`fanout`、`matrix` 必须留在选中的 runner 进程内调用 provider 函数，不得通过启动其他 runner 可执行文件完成边。每条 `caller:callee` 必须保留指定 caller 的身份。
 
 ## Provider 约束
 
@@ -67,7 +67,7 @@ const char *xello_language(void);
 7. 更新 README 的当前支持语言、技术路线和项目结构。
 8. 增加或调整 `tests/test_xello.py`。
 
-当前 C++ 已完整进入矩阵。Zig、Kotlin/Native、WebAssembly 已有源码和构建探测，但在完整动态矩阵接入前继续记录在 `planned_languages`。
+C++、Zig、Kotlin/Native、WebAssembly 和 MoonBit 均已具备 runner/provider。可选工具链缺失时记录在 `planned_languages`；MoonBit 使用 native C 后端，包配置见 `moon.mod` 和对应 `moon.pkg`。
 
 ## 常用命令
 
@@ -126,7 +126,7 @@ make fmt
 - TOML/YAML/JSON 基础检查。
 - Ruff Python lint/format。
 - C/C++/Objective-C、Go、Rust 格式化。
-- Zig、Kotlin、WebAssembly text 等可选 formatter。缺少对应工具时会跳过可选 formatter。
+- MoonBit (`moon fmt`)、Zig、Kotlin、WebAssembly text 等可选 formatter。缺少对应工具时会跳过可选 formatter。
 
 提交前至少跑：
 
