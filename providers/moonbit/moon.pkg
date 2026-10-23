@@ -1,0 +1,18 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+}
+
+pkgtype(kind: "foreign_library")
+
+// UTF-8 is used only by the native and Wasm source files.
+
+warnings = "-29"
+
+options(
+  targets: {
+    "hello_bytes.mbt": [ "native", "wasm", "wasm-gc" ],
+    "hello_js.mbt": [ "js" ],
+    "vm_exports.mbt": [ "wasm", "wasm-gc" ],
+  },
+  link: { "js": { "format": "cjs" } },
+)

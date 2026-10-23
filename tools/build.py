@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -17,7 +19,7 @@ LIB_DIR = BUILD / "lib"
 BIN_DIR = BUILD / "bin"
 CACHE_DIR = BUILD / "cache"
 MANIFEST = BUILD / "xello_languages.json"
-LANGUAGE_ORDER = ("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm")
+LANGUAGE_ORDER = ("python", "c", "go", "rust", "cpp", "zig", "kotlin_native", "wasm", "moonbit")
 
 
 def run(args: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -135,14 +137,106 @@ def parse_requested_languages(raw: str | None) -> set[str] | None:
     return languages
 
 
+def build_moonbit_vm(moon: str, moon_home: Path, backend: str) -> None:
+    require("node")
+    if importlib.util.find_spec("py_mini_racer") is None:
+        raise SystemExit("MoonBit VM backends require: python3 -m pip install -r requirements-moonbit.txt")
+    node = subprocess.run(["node", "-p", "process.execPath"], check=True, capture_output=True, text=True).stdout.strip()
+    version = subprocess.run(
+        ["node", "-p", "process.versions.node.split('.')[0]"], check=True, capture_output=True, text=True
+    )
+    if int(version.stdout) < 22:
+        raise SystemExit("MoonBit VM backends require Node.js 22 or later (including Wasm GC support)")
+    headers = next(
+        (
+            path
+            for path in (
+                Path(node).resolve().parent.parent / "include/node",
+                Path("/usr/include/node"),
+                Path("/usr/local/include/node"),
+            )
+            if (path / "node_api.h").is_file()
+        ),
+        None,
+    )
+    if headers is None:
+        raise SystemExit("MoonBit VM backends require Node-API headers alongside Node.js")
+    if not (moon_home / f"lib/core/_build/{backend}/release/bundle/prelude/prelude.mi").is_file():
+        run([moon, "bundle", "--target", backend], cwd=moon_home / "lib/core")
+    target = CACHE_DIR / f"moonbit-{backend}"
+    run(
+        [
+            moon,
+            "build",
+            "--target",
+            backend,
+            "--release",
+            "--deny-warn",
+            "--target-dir",
+            str(target),
+            "providers/moonbit",
+            "runners/moonbit",
+        ]
+    )
+    suffix = "cjs" if backend == "js" else "wasm"
+    generated_suffix = "js" if backend == "js" else "wasm"
+    for directory, kind in (("providers", "provider"), ("runners", "runner")):
+        source = target / f"{backend}/release/build/{directory}/moonbit/moonbit.{generated_suffix}"
+        shutil.copy2(source, LIB_DIR / f"xello_moonbit_{kind}_{backend}.{suffix}")
+    run(
+        [
+            "cc",
+            "-shared",
+            "-fPIC",
+            "-I",
+            str(headers),
+            str(ROOT / "runners/moonbit/node_bridge.c"),
+            *python_extension_link_flags(),
+            *c_dlopen_link_flags(),
+            "-o",
+            str(LIB_DIR / "xello_moonbit_node.node"),
+        ]
+    )
+    run(
+        [
+            "cc",
+            "-shared",
+            "-fPIC",
+            "-I",
+            str(ROOT / "include"),
+            str(ROOT / "providers/moonbit/vm_shim.c"),
+            f'-DXELLO_MOONBIT_BACKEND="{backend}"',
+            *python_config_args("--includes"),
+            *python_config_args("--embed", "--ldflags"),
+            *c_dlopen_link_flags(),
+            "-o",
+            str(LIB_DIR / f"libxello_moonbit{shared_ext()}"),
+        ]
+    )
+    runner = BIN_DIR / exe("xello_moonbit")
+    runner.write_text(
+        f'#!/bin/sh\nexec node {shlex.quote(str(ROOT / "runners/moonbit/vm_host.cjs"))} {backend} "$@"\n',
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Xello language artifacts.")
     parser.add_argument(
         "--languages",
         help="comma-separated language subset to build; omitted builds every available language",
     )
+    parser.add_argument(
+        "--moonbit-backend",
+        choices=("c", "native", "js", "wasm", "wasm-gc"),
+        default=os.environ.get("MOONBIT_BACKEND") or ("native" if os.environ.get("MOONBIT_NEW_NATIVE") == "1" else "c"),
+        help="MoonBit code generator (also settable with MOONBIT_BACKEND)",
+    )
     args = parser.parse_args()
     requested_languages = parse_requested_languages(args.languages)
+    if args.moonbit_backend not in ("c", "native", "js", "wasm", "wasm-gc"):
+        parser.error(f"invalid MoonBit backend: {args.moonbit_backend}")
 
     LIB_DIR.mkdir(parents=True, exist_ok=True)
     BIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -304,6 +398,7 @@ def main() -> None:
                 "-o",
                 str(LIB_DIR / f"libxello_go{ext}"),
                 str(ROOT / "providers/go/xello_go.go"),
+                *([str(ROOT / "providers/go/runtime_darwin.go")] if platform.system() == "Darwin" else []),
             ],
             env=go_env,
         )
@@ -430,6 +525,8 @@ def main() -> None:
                         if platform.system() == "Darwin"
                         else ["-Wl,-rpath,$ORIGIN/kotlin_native"]
                     ),
+                    # Keep Kotlin runtime state alive across provider load/unload cycles.
+                    *(["-Wl,-z,nodelete"] if platform.system() == "Linux" else []),
                     "-o",
                     str(LIB_DIR / f"libxello_kotlin_native{ext}"),
                 ]
@@ -487,11 +584,85 @@ def main() -> None:
         else:
             mark_unavailable("wasm", "skipped: wasm-tools not found")
 
+    if selected("moonbit"):
+        moon = shutil.which("moon")
+        if moon and shutil.which("moonc"):
+            require("cc")
+            moon_home = Path(os.environ.get("MOON_HOME") or Path(moon).resolve().parent.parent)
+            if args.moonbit_backend in ("js", "wasm", "wasm-gc"):
+                build_moonbit_vm(moon, moon_home, args.moonbit_backend)
+            else:
+                backend = args.moonbit_backend
+                moon_target = CACHE_DIR / f"moonbit-{backend}"
+                run(
+                    [
+                        moon,
+                        "build",
+                        "--target",
+                        "native",
+                        "--debug" if backend == "native" else "--release",
+                        "--deny-warn",
+                        "--target-dir",
+                        str(moon_target),
+                        "providers/moonbit",
+                        "runners/moonbit",
+                    ],
+                    env={"MOONBIT_NEW_NATIVE": "1" if backend == "native" else "0"},
+                )
+                mode = "debug" if backend == "native" else "release"
+                native_build = moon_target / f"native/{mode}/build"
+                provider_build = native_build / "providers/moonbit"
+                generated = (
+                    provider_build / "__moonbit_link_core__/moonbit.o"
+                    if backend == "native"
+                    else provider_build / "moonbit.c"
+                )
+                if not generated.is_file():
+                    raise SystemExit(
+                        f"MoonBit {backend} backend did not generate {generated}; this platform may be unsupported"
+                    )
+                if platform.system() == "Darwin":
+                    export_flags = ["-Wl,-exported_symbol,_xello_hello", "-Wl,-exported_symbol,_xello_language"]
+                else:
+                    exports = moon_target / "exports.map"
+                    exports.write_text("{ global: xello_hello; xello_language; local: *; };\n", encoding="utf-8")
+                    export_flags = [f"-Wl,--version-script={exports}"]
+                runtime = moon_home / "lib/runtime"
+                # Compile runtime sources as PIC and hide them to isolate each loaded provider.
+                run(
+                    [
+                        "cc",
+                        "-shared",
+                        "-fPIC",
+                        "-fvisibility=hidden",
+                        "-O2",
+                        "-fwrapv",
+                        "-fno-strict-aliasing",
+                        "-I",
+                        include,
+                        "-I",
+                        str(moon_home / "include"),
+                        str(ROOT / "providers/moonbit/xello_moonbit.c"),
+                        str(generated),
+                        *(str(runtime / name) for name in ("runtime.c", "utf.c", "env.c", "backtrace.c")),
+                        "-lm",
+                        *c_dlopen_link_flags(),
+                        *export_flags,
+                        "-o",
+                        str(LIB_DIR / f"libxello_moonbit{ext}"),
+                    ]
+                )
+                shutil.copy2(native_build / "runners/moonbit/moonbit.exe", BIN_DIR / exe("xello_moonbit"))
+            mark_built("moonbit")
+        else:
+            mark_unavailable("moonbit", "skipped: moon and moonc are required (install the MoonBit toolchain)")
+
     MANIFEST.write_text(
         json.dumps(
             {
                 "languages": [language for language in LANGUAGE_ORDER if language in built_languages],
                 "planned_languages": planned_languages,
+                **({"moonbit_backend": args.moonbit_backend} if "moonbit" in built_languages else {}),
             },
             indent=2,
             sort_keys=True,

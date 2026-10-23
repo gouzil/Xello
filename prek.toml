@@ -24,6 +24,7 @@ hooks = [
   { id = "fmt-go", name = "format go with gofmt", language = "system", entry = "gofmt -w", files = "\\.go$" },
   { id = "fmt-rust", name = "format rust with rustfmt", language = "system", entry = "rustfmt --edition 2024", files = "\\.rs$" },
   { id = "fmt-zig", name = "format zig with zig fmt", language = "system", entry = "python3 tools/run_optional_formatter.py zig fmt", files = "\\.(zig|zon)$" },
+  { id = "fmt-moonbit", name = "format moonbit with moon fmt", language = "system", entry = "python3 tools/run_optional_formatter.py moon fmt", files = "(\\.mbt$|(^|/)moon\\.(mod|pkg)$)", pass_filenames = false },
   { id = "fmt-js-ts", name = "format javascript/typescript/node with prettier", language = "system", entry = "prettier --write", files = "(\\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$|(^|/)package(-lock)?\\.json$|(^|/)tsconfig[^/]*\\.json$)" },
   { id = "fmt-java", name = "format java with google-java-format", language = "system", entry = "google-java-format -i", files = "\\.java$" },
   { id = "fmt-kotlin", name = "format kotlin/jvm and kotlin/native with ktfmt", language = "system", entry = "python3 tools/run_optional_formatter.py ktfmt --format", files = "\\.(kt|kts)$" },

@@ -12,7 +12,7 @@ BIN_DIR = BUILD / "bin"
 LIB_DIR = BUILD / "lib"
 
 LANGUAGES = ("python", "c", "go", "rust")
-PLANNED_LANGUAGES = ("cpp", "zig", "kotlin_native", "wasm")
+PLANNED_LANGUAGES = ("cpp", "zig", "kotlin_native", "wasm", "moonbit")
 RUNTIME_MANIFEST = BUILD / "xello_languages.json"
 
 BRIDGE_KIND = {
@@ -41,6 +41,7 @@ FALLBACK_CALLEE_BRIDGE_KIND = {
     "zig": "Zig shared library via C ABI",
     "kotlin_native": "Kotlin/Native dynamic library via C ABI",
     "wasm": "WebAssembly C ABI shim",
+    "moonbit": "MoonBit shared library via C ABI",
 }
 
 FALLBACK_BRIDGE_KIND = {
@@ -61,6 +62,7 @@ PROVIDER_BRIDGE_KIND = {
     "zig": "Zig provider function via C ABI",
     "kotlin_native": "Kotlin/Native provider function via C ABI",
     "wasm": "WebAssembly C ABI shim",
+    "moonbit": "MoonBit provider function via C ABI",
 }
 
 

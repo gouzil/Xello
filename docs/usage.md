@@ -17,6 +17,47 @@ The C++ runner and Python extension use pybind11 headers. CI and Docker install 
 python3 -m pip install pybind11
 ```
 
+MoonBit builds the same runner and provider for C, the new native code generator, JavaScript, Wasm and Wasm GC. Install the official toolchain and add it to `PATH` (CI and Docker install it automatically):
+
+```sh
+curl --retry 3 -fsSL https://cli.moonbitlang.com/install/unix.sh -o /tmp/install-moonbit.sh
+bash /tmp/install-moonbit.sh
+export PATH="$HOME/.moon/bin:$PATH"
+python3 tools/build.py --languages moonbit
+./build/bin/xello_moonbit --json call moonbit
+```
+
+Select a backend with `--moonbit-backend`, or set `MOONBIT_BACKEND` for Make and tests:
+
+| Value | Runner and provider artifacts | Requirements |
+| --- | --- | --- |
+| `c` (default) | C release code, native executable and isolated shared library | MoonBit and a C compiler on macOS/Linux |
+| `native` | New native debug object code, native executable and isolated shared library | MoonBit's new code generator, currently macOS arm64/Linux x86-64 |
+| `js` | Compiled CommonJS modules | Node.js 22+, Node-API headers and embedded V8 |
+| `wasm` | Compiled linear-memory Wasm modules | Same VM dependencies |
+| `wasm-gc` | Compiled Wasm GC modules | Same VM dependencies |
+
+For the VM targets, install Node.js with its headers and install the Python runtime dependency into the Python environment used for building:
+
+```sh
+python3 -m pip install -r requirements-moonbit.txt
+MOONBIT_BACKEND=js make test
+MOONBIT_BACKEND=wasm make matrix-from RUNNER=moonbit
+MOONBIT_BACKEND=wasm-gc make benchmark-from FROM=moonbit
+python3 tools/build.py --languages moonbit --moonbit-backend native
+docker build --build-arg MOONBIT_BACKEND=wasm-gc -t xello .
+```
+
+The `moonbit` language identity stays the same across backends. `build/xello_languages.json` records `moonbit_backend`; rebuild to change it. CLI arguments take precedence over `MOONBIT_BACKEND`, which takes precedence over the native toolchain's `MOONBIT_NEW_NATIVE=1` switch. `--languages` replaces the manifest; run `make build` to restore all available languages.
+
+The VM runner executes the compiled MoonBit CLI inside Node.js. Its Node-API bridge calls C ABI providers inside that process. VM callees use Python/C API embedding and `mini-racer` V8 to execute the compiled MoonBit provider; no matrix edge launches another runner. The incoming C ABI boundary therefore does not mean every backend uses a native MoonBit provider. Only the MoonBit runner's own `moonbit -> moonbit` edge calls its MoonBit function directly; other runners' aggregate commands load the shared provider for that edge.
+
+VM call timings include lazy Python/V8 initialization in each new runner process. Benchmark warmup and measured calls each start a separate runner, so warmup does not remove that initialization cost from later samples. The native C backend uses release optimization while the new native generator currently uses debug mode, so their timings represent different build modes.
+
+Verified with `moon 0.1.20261021` / `moonc 0.10.17`. Default builds report a missing MoonBit toolchain in `planned_languages`; explicitly requesting MoonBit fails instead. Selecting a VM backend requires its runtime dependencies. Windows and the experimental LLVM backend remain unsupported; the stable toolchain does not ship the LLVM standard library. Toolchain upgrades require revalidation of the selected backend.
+
+The Go provider on macOS, Kotlin/Native provider on Linux and Python runtime used by MoonBit VM providers remain loaded until process exit so their background runtime threads stay valid between matrix edges.
+
 `make build` writes the actual built language set to `build/xello_languages.json`. Full matrix and benchmark commands use that manifest, so optional languages are included only when their toolchains are available.
 
 Inspect the built and skipped language set:
@@ -46,9 +87,12 @@ make matrix-from RUNNER=rust
 make matrix-from RUNNER=zig
 make matrix-from RUNNER=kotlin_native
 make matrix-from RUNNER=wasm
+make matrix-from RUNNER=moonbit
 make fanout-from RUNNER=cpp FROM=rust
 make fanout-from RUNNER=rust FROM=go
 make fanout-from RUNNER=zig FROM=kotlin_native
+make fanout-from RUNNER=moonbit FROM=moonbit
+make chain-from RUNNER=moonbit CHAIN=moonbit:python,python:moonbit,moonbit:c,c:moonbit
 make chain-from RUNNER=wasm CHAIN=wasm:python,python:rust,rust:go,go:cpp,cpp:zig,zig:kotlin_native,kotlin_native:c
 ```
 
@@ -73,6 +117,9 @@ python3 runners/python/xello_python.py fanout c
 ./build/bin/xello_zig call kotlin_native
 ./build/bin/xello_kotlin_native.kexe call wasm
 python3 runners/wasm/xello_wasm.py fanout zig
+./build/bin/xello_moonbit call python
+./build/bin/xello_moonbit call moonbit
+./build/bin/xello_c call moonbit
 ```
 
 Use JSON output when a script needs structured results:
@@ -107,6 +154,7 @@ python3 tools/benchmark.py fanout rust
 python3 tools/benchmark.py fanout zig
 python3 tools/benchmark.py fanout kotlin_native
 python3 tools/benchmark.py fanout wasm
+python3 tools/benchmark.py fanout moonbit
 ```
 
 Equivalent Make targets:
@@ -120,6 +168,7 @@ make benchmark-from FROM=rust
 make benchmark-from FROM=zig
 make benchmark-from FROM=kotlin_native
 make benchmark-from FROM=wasm
+make benchmark-from FROM=moonbit
 ```
 
 Benchmark output includes two duration groups:
@@ -206,6 +255,7 @@ Configured formatter coverage:
 | Go | gofmt |
 | Rust | rustfmt |
 | Zig | zig fmt |
+| MoonBit | moon fmt |
 | JavaScript, Node.js, TypeScript | Prettier |
 | Java | google-java-format |
 | Kotlin/JVM, Kotlin/Native | ktfmt |
@@ -228,6 +278,7 @@ Hooks for languages without matching files are skipped.
 - `bindings/rust_python`: PyO3 Python extension for Python calling Rust.
 - `bindings/cpp_python`: pybind11 Python extension for Python calling C++.
 - `providers/*`: provider implementations, mostly exposed through C ABI boundaries.
+- `moon.mod`, `providers/moonbit/moon.pkg`, `runners/moonbit/moon.pkg`: MoonBit module/package metadata.
 - `include/xello.h`: shared fallback ABI.
 - `build/xello_languages.json`: generated runtime manifest for the actual built language set.
 - `tools/build.py`: builds shared libraries, runners, bindings, and the manifest.

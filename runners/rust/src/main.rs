@@ -46,6 +46,7 @@ fn bridge_kind(callee: &str, python_bridge: RustPythonBridge) -> Option<&'static
         "zig" => Some("Zig shared library via C ABI"),
         "kotlin_native" => Some("Kotlin/Native dynamic library via C ABI"),
         "wasm" => Some("WebAssembly C ABI shim"),
+        "moonbit" => Some("MoonBit shared library via C ABI"),
         _ => None,
     }
 }
@@ -60,6 +61,7 @@ fn provider_bridge_kind(callee: &str) -> Option<&'static str> {
         "zig" => Some("Zig provider function via C ABI"),
         "kotlin_native" => Some("Kotlin/Native provider function via C ABI"),
         "wasm" => Some("WebAssembly C ABI shim"),
+        "moonbit" => Some("MoonBit provider function via C ABI"),
         _ => None,
     }
 }
@@ -113,7 +115,7 @@ fn call_edge(callee: &str, python_bridge: RustPythonBridge) -> Result<CallResult
             let start = Instant::now();
             (rust_hello("rust"), start.elapsed().as_nanos().max(1))
         }
-        "c" | "go" | "cpp" | "zig" | "kotlin_native" | "wasm" => call_provider(callee)?,
+        "c" | "go" | "cpp" | "zig" | "kotlin_native" | "wasm" | "moonbit" => call_provider(callee)?,
         _ => unreachable!(),
     };
 
@@ -222,6 +224,7 @@ fn language_list() -> Vec<&'static str> {
         "zig",
         "kotlin_native",
         "wasm",
+        "moonbit",
     ];
     let Ok(manifest) = fs::read_to_string("build/xello_languages.json") else {
         return vec!["python", "c", "go", "rust", "cpp"];

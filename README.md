@@ -27,8 +27,9 @@ The full Docker toolchain is designed to build these first-class languages:
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
 | Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Native Kotlin/Native runner plus C ABI shim |
 | WebAssembly | `runners/wasm/xello_wasm.py` | WAT module, WebAssembly runtime host, and C ABI shim |
+| MoonBit | `build/bin/xello_moonbit` | Selectable C, new native, JavaScript, Wasm or Wasm GC runner/provider with a C ABI boundary |
 
-The Docker benchmark image builds the full matrix. In the snapshot below, `build/xello_languages.json` contains all eight languages and `planned_languages` is empty, so the benchmark includes Zig, Kotlin/Native, and WebAssembly even when the host machine does not have those optional toolchains installed.
+The Docker image builds all nine languages, including MoonBit. The historical benchmark snapshot below predates MoonBit support and covers the original eight languages with an empty `planned_languages` set; no MoonBit timing is claimed by that snapshot.
 
 ## Execution Model
 
@@ -93,6 +94,15 @@ Direct `call` commands use the named runner's native bridge path. Aggregated com
 | `python/c/go/rust/cpp -> zig` | Zig provider exposing C ABI |
 | `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider exposed through a C ABI shim |
 | `python/c/go/rust/cpp -> wasm` | WebAssembly provider exposed through a C ABI shim |
+| `python -> moonbit` | Python `ctypes` over the MoonBit provider's C ABI |
+| `c/cpp -> moonbit` | `dlopen` over the MoonBit provider's C ABI |
+| `go -> moonbit` | cgo over the MoonBit provider's C ABI |
+| `rust -> moonbit` | Rust `libloading` over the MoonBit provider's C ABI |
+| `zig/kotlin_native/wasm -> moonbit` | Dynamic shared-library loading over the MoonBit provider's C ABI |
+| `moonbit -> python/c/go/rust/cpp/zig/kotlin_native/wasm` | Native FFI for C/native backends, or Node-API for VM backends, then the callee's C ABI provider |
+| `moonbit -> moonbit` | Direct compiled MoonBit function inside the MoonBit runner |
+
+For C/native backends, the MoonBit provider is a generated native shared library. For JS/Wasm/Wasm GC, its C ABI entrypoint embeds Python/C API and MiniRacer V8 to execute the selected compiled MoonBit provider. VM call timings include lazy Python/V8 initialization in each new runner process. In an aggregate command started from another runner, even `moonbit -> moonbit` uses the shared provider; it does not start the MoonBit runner.
 
 ## Benchmark Snapshot
 
@@ -143,5 +153,6 @@ When adding languages, Xello prioritizes targets that can reliably produce nativ
 | Zig | Implemented optional native runner/provider | Enters the matrix when `zig` is installed |
 | Kotlin/Native | Implemented optional native runner/provider | Enters the matrix when `kotlinc-native` is installed |
 | WebAssembly | Implemented optional WAT module, C ABI shim, and Python runtime runner | Enters the matrix when `wasm-tools` is installed |
+| MoonBit | Implemented optional runner/provider for all stable targets | Select with `MOONBIT_BACKEND`; VM targets also require Node.js and embedded V8; see [Usage](docs/usage.md) |
 | Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | Possible with explicit runtime or platform boundaries | Needs target-specific build/runtime policy before becoming first-class |
 | Ruby/PHP/R/Julia/Assembly | Not first-class for now | Runtime, packaging, or architecture-specific constraints make them poor generic matrix targets |

@@ -27,8 +27,9 @@ Xello 是一个跨语言 Hello World 调用矩阵。每种支持语言都是实�
 | Zig | `build/bin/xello_zig` | Native Zig runner/provider over C ABI |
 | Kotlin/Native | `build/bin/xello_kotlin_native.kexe` | Kotlin/Native runner 加 C ABI shim |
 | WebAssembly | `runners/wasm/xello_wasm.py` | WAT module、WebAssembly runtime host 和 C ABI shim |
+| MoonBit | `build/bin/xello_moonbit` | 可选择 C、新原生、JavaScript、Wasm 或 Wasm GC 后端，统一通过 C ABI 接入 |
 
-Docker benchmark 镜像会构建完整矩阵。下面快照里的 `build/xello_languages.json` 包含全部 8 种语言，`planned_languages` 为空，所以即使宿主机没有 Zig、Kotlin/Native、WebAssembly 工具链，benchmark 也能覆盖这些可选路径。
+Docker 镜像会构建包含 MoonBit 的全部 9 种语言。下方历史 benchmark 快照早于 MoonBit 接入，当时包含原有 8 种语言且 `planned_languages` 为空；快照没有包含 MoonBit 性能数据。
 
 ## 执行模型
 
@@ -93,6 +94,15 @@ Xello 优先使用成熟语言桥接库。没有合适成熟桥接时，才使�
 | `python/c/go/rust/cpp -> zig` | Zig provider 暴露 C ABI |
 | `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider 通过 C ABI shim 暴露 |
 | `python/c/go/rust/cpp -> wasm` | WebAssembly provider 通过 C ABI shim 暴露 |
+| `python -> moonbit` | Python `ctypes` 调用 MoonBit provider 的 C ABI |
+| `c/cpp -> moonbit` | `dlopen` 调用 MoonBit provider 的 C ABI |
+| `go -> moonbit` | cgo 调用 MoonBit provider 的 C ABI |
+| `rust -> moonbit` | Rust `libloading` 调用 MoonBit provider 的 C ABI |
+| `zig/kotlin_native/wasm -> moonbit` | 动态加载共享库，调用 MoonBit provider 的 C ABI |
+| `moonbit -> python/c/go/rust/cpp/zig/kotlin_native/wasm` | C/native 后端通过 Native FFI，VM 后端通过 Node-API，再调用 callee 的 C ABI provider |
+| `moonbit -> moonbit` | 在 MoonBit runner 内直接执行编译后的 MoonBit 函数 |
+
+C/native 后端的 MoonBit provider 是编译生成的原生共享库。JS/Wasm/Wasm GC 后端的 C ABI 入口会通过 Python/C API 和 MiniRacer 嵌入 V8，执行选定后端的 MoonBit provider 产物；VM 调用耗时包含每个新 runner 进程首次初始化 Python/V8 的开销。从其他 runner 启动聚合命令时，`moonbit -> moonbit` 也会调用共享 provider，不会启动 MoonBit runner。
 
 ## Benchmark 快照
 
@@ -143,5 +153,6 @@ docker run --rm xello python3 tools/benchmark.py --iterations 10 --warmup 1 matr
 | Zig | 已实现可选 native runner/provider | 安装 `zig` 后进入矩阵 |
 | Kotlin/Native | 已实现可选 native runner/provider | 安装 `kotlinc-native` 后进入矩阵 |
 | WebAssembly | 已实现可选 WAT module、C ABI shim 和 Python runtime runner | 安装 `wasm-tools` 后进入矩阵 |
+| MoonBit | 已实现所有稳定目标的可选 runner/provider | 通过 `MOONBIT_BACKEND` 选择；VM 目标另需 Node.js 和嵌入式 V8，见[使用方式](docs/usage.zh-CN.md) |
 | Java/Kotlin JVM/C#/.NET/Dart/Swift/Objective-C/Lua | 可以支持，但需要明确 runtime 或平台边界 | 成为一等语言前需要先定义目标构建/运行策略 |
 | Ruby/PHP/R/Julia/Assembly | 暂不作为一等支持 | runtime、打包或架构绑定问题使它们不适合做通用矩阵目标 |
