@@ -50,7 +50,9 @@ docker build --build-arg MOONBIT_BACKEND=wasm-gc -t xello .
 
 所有后端沿用 `moonbit` 语言名。`build/xello_languages.json` 的 `moonbit_backend` 记录实际后端，切换时重新构建。命令行参数优先于 `MOONBIT_BACKEND`，后者优先于工具链原生的 `MOONBIT_NEW_NATIVE=1` 开关。`--languages` 会重写 manifest，恢复完整集合请运行 `make build`。
 
-VM runner 在 Node.js 内执行编译后的 MoonBit CLI，通过 Node-API 桥接在同一进程中调用 C ABI provider。VM callee 通过 Python/C API 和 `mini-racer` 嵌入 V8，执行真实 MoonBit provider 产物；矩阵各条边都不会启动另一个 runner 进程。该路径的计时包含 Python/V8 桥接开销。C 后端使用 release 优化，新原生代码生成器目前使用 debug 模式，两者计时对应不同的构建模式。
+VM runner 在 Node.js 内执行编译后的 MoonBit CLI，通过 Node-API 桥接在同一进程中调用 C ABI provider。VM callee 通过 Python/C API 和 `mini-racer` 嵌入 V8，执行真实 MoonBit provider 产物；矩阵各条边都不会启动另一个 runner 进程。因此，来向使用 C ABI 并不代表所有后端都会调用原生 MoonBit provider。只有 MoonBit runner 自己的 `moonbit -> moonbit` 会直接执行其 MoonBit 函数，其他 runner 的聚合命令会为这条边加载共享 provider。
+
+VM 调用耗时包含每个新 runner 进程首次初始化 Python/V8 的开销。Benchmark 的预热和每次采样都会分别启动 runner，所以预热不会消除后续样本的初始化成本。C 后端使用 release 优化，新原生代码生成器目前使用 debug 模式，两者计时对应不同的构建模式。
 
 已验证 `moon 0.1.20261021` / `moonc 0.10.17`。缺少 MoonBit 工具链时，默认构建会在 `planned_languages` 记录原因，显式指定 MoonBit 时会报错。选择 VM 后端时必须具备对应的运行时依赖。Windows 和实验性 LLVM 后端暂不支持，稳定工具链没有提供 LLVM 标准库。工具链升级后需要重新验证所选后端。
 

@@ -94,8 +94,15 @@ Xello 优先使用成熟语言桥接库。没有合适成熟桥接时，才使�
 | `python/c/go/rust/cpp -> zig` | Zig provider 暴露 C ABI |
 | `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider 通过 C ABI shim 暴露 |
 | `python/c/go/rust/cpp -> wasm` | WebAssembly provider 通过 C ABI shim 暴露 |
-| `any -> moonbit` | MoonBit native provider 通过 C ABI 暴露 |
-| `moonbit -> any` | Native FFI over C ABI；自调用直接执行 MoonBit 函数 |
+| `python -> moonbit` | Python `ctypes` 调用 MoonBit provider 的 C ABI |
+| `c/cpp -> moonbit` | `dlopen` 调用 MoonBit provider 的 C ABI |
+| `go -> moonbit` | cgo 调用 MoonBit provider 的 C ABI |
+| `rust -> moonbit` | Rust `libloading` 调用 MoonBit provider 的 C ABI |
+| `zig/kotlin_native/wasm -> moonbit` | 动态加载共享库，调用 MoonBit provider 的 C ABI |
+| `moonbit -> python/c/go/rust/cpp/zig/kotlin_native/wasm` | C/native 后端通过 Native FFI，VM 后端通过 Node-API，再调用 callee 的 C ABI provider |
+| `moonbit -> moonbit` | 在 MoonBit runner 内直接执行编译后的 MoonBit 函数 |
+
+C/native 后端的 MoonBit provider 是编译生成的原生共享库。JS/Wasm/Wasm GC 后端的 C ABI 入口会通过 Python/C API 和 MiniRacer 嵌入 V8，执行选定后端的 MoonBit provider 产物；VM 调用耗时包含每个新 runner 进程首次初始化 Python/V8 的开销。从其他 runner 启动聚合命令时，`moonbit -> moonbit` 也会调用共享 provider，不会启动 MoonBit runner。
 
 ## Benchmark 快照
 

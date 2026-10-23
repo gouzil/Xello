@@ -94,8 +94,15 @@ Direct `call` commands use the named runner's native bridge path. Aggregated com
 | `python/c/go/rust/cpp -> zig` | Zig provider exposing C ABI |
 | `python/c/go/rust/cpp -> kotlin_native` | Kotlin/Native provider exposed through a C ABI shim |
 | `python/c/go/rust/cpp -> wasm` | WebAssembly provider exposed through a C ABI shim |
-| `any -> moonbit` | MoonBit native provider exposed through C ABI |
-| `moonbit -> any` | Native FFI over C ABI; self-calls use the MoonBit function directly |
+| `python -> moonbit` | Python `ctypes` over the MoonBit provider's C ABI |
+| `c/cpp -> moonbit` | `dlopen` over the MoonBit provider's C ABI |
+| `go -> moonbit` | cgo over the MoonBit provider's C ABI |
+| `rust -> moonbit` | Rust `libloading` over the MoonBit provider's C ABI |
+| `zig/kotlin_native/wasm -> moonbit` | Dynamic shared-library loading over the MoonBit provider's C ABI |
+| `moonbit -> python/c/go/rust/cpp/zig/kotlin_native/wasm` | Native FFI for C/native backends, or Node-API for VM backends, then the callee's C ABI provider |
+| `moonbit -> moonbit` | Direct compiled MoonBit function inside the MoonBit runner |
+
+For C/native backends, the MoonBit provider is a generated native shared library. For JS/Wasm/Wasm GC, its C ABI entrypoint embeds Python/C API and MiniRacer V8 to execute the selected compiled MoonBit provider. VM call timings include lazy Python/V8 initialization in each new runner process. In an aggregate command started from another runner, even `moonbit -> moonbit` uses the shared provider; it does not start the MoonBit runner.
 
 ## Benchmark Snapshot
 
